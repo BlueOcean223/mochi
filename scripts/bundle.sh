@@ -13,7 +13,16 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Mochi"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
-# SIGN_IDENTITY 没设就用 ad-hoc 签名。ad-hoc 每次重编签名都会变，辅助功能权限要重新给，
-# 所以做到粘贴以后改用固定的自签证书（见 .agent/docs/decisions.md「待定」）。
-codesign --force --sign "${SIGN_IDENTITY:--}" --timestamp=none "$APP"
+# 辅助功能权限认签名。用登录钥匙串里的自签证书「Mochi Development」签，重编以后签名不变，权限不用重新给
+# （怎么建的见 .agent/docs/notes/dev-env.md）。没有这张证书时用 ad-hoc 签名，每次重编都要重新给权限。
+# SIGN_IDENTITY 可以指定别的身份，`-` 是 ad-hoc。
+IDENTITY="${SIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ]; then
+  if security find-certificate -c "Mochi Development" >/dev/null 2>&1; then
+    IDENTITY="Mochi Development"
+  else
+    IDENTITY="-"
+  fi
+fi
+codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
 echo "$APP"

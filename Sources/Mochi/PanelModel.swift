@@ -57,6 +57,8 @@ struct Preview {
 enum PanelCommand {
     case up, down, sectionUp, sectionDown, typeMenu, escape
     case paste, copy, pastePlain, pin, delete, clearAll, quickLook, revealInFinder, openLink
+    /// 底栏「去授权」：打开系统设置的辅助功能页。
+    case openAccessibilitySettings
 }
 
 /// 面板的状态：搜索词、类型筛选、当前这一页、选中哪条、预览。界面只读它，改都走这里的方法。
@@ -90,13 +92,21 @@ final class PanelModel {
     private(set) var isPaused = false
     /// 呼出面板时的前台应用，回车粘贴到它那里。
     private(set) var frontAppName: String?
+    /// 有辅助功能权限，回车能替用户按 ⌘V；没有时回车只复制。
+    private(set) var canPaste = true
+    /// 清空前的确认：要删的条数。
+    private(set) var clearConfirmation: Int?
     var isTypeMenuOpen = false
     var typeMenuIndex = 0
     /// 每次加一，列表就滚回顶上（呼出、换搜索词时）。
     private(set) var scrollToTop = 0
+    /// 每次加一，列表就滚到选中的那条（置顶以后它挪到了最上面）。
+    private(set) var scrollToSelection = 0
 
     /// 底栏按钮、双击走这里，由 PanelController 接。
     @ObservationIgnored var perform: ((PanelCommand) -> Void)?
+    /// 选中的换了（Quick Look 开着时跟着换）。
+    @ObservationIgnored var selectionChanged: ((Clip?) -> Void)?
 
     @ObservationIgnored private let store: ClipStore
     @ObservationIgnored private var generation = 0
@@ -138,10 +148,12 @@ final class PanelModel {
     // MARK: - 打开、搜索、筛选
 
     /// 每次呼出前调：清空搜索词和类型，读第一页，选中第一条。
-    func prepare(isPaused: Bool, frontAppName: String?) async {
+    func prepare(isPaused: Bool, frontAppName: String?, canPaste: Bool) async {
         self.isPaused = isPaused
         self.frontAppName = frontAppName
+        self.canPaste = canPaste
         isTypeMenuOpen = false
+        clearConfirmation = nil
         query = ""
         kind = nil
         await reload()
@@ -222,6 +234,7 @@ final class PanelModel {
         guard id != selectedID || preview == nil else { return }
         selectedID = id
         loadPreview()
+        selectionChanged?(selectedClip)
     }
 
     func move(_ delta: Int) {
@@ -243,6 +256,56 @@ final class PanelModel {
         }
         select(target?.id)
         if let target, let position = clips.firstIndex(where: { $0.id == target.id }) { loadMore(near: position) }
+    }
+
+    // MARK: - 改
+
+    func togglePin() async {
+        guard let clip = selectedClip else { return }
+        do {
+            try await store.setPinned(!clip.isPinned, id: clip.id)
+        } catch {
+            log.error("pin failed: \(error, privacy: .public)")
+        }
+        await reload(keepSelection: true)
+        scrollToSelection += 1
+    }
+
+    /// 删掉选中的，选中它下面那条（已经是最后一条就选上面那条）。
+    func deleteSelected() async {
+        guard let index = clips.firstIndex(where: { $0.id == selectedID }) else { return }
+        let id = clips[index].id
+        let neighbor = index + 1 < clips.count ? clips[index + 1] : index > 0 ? clips[index - 1] : nil
+        do {
+            try await store.delete(id: id)
+        } catch {
+            log.error("delete failed: \(error, privacy: .public)")
+        }
+        select(neighbor?.id)
+        await reload(keepSelection: true)
+    }
+
+    /// 先问一句；没有能删的（全是置顶的）返回 false。
+    func askToClear() async -> Bool {
+        let count = (try? await store.unpinnedCount()) ?? 0
+        guard count > 0 else { return false }
+        clearConfirmation = count
+        return true
+    }
+
+    func cancelClear() {
+        clearConfirmation = nil
+    }
+
+    func confirmClear() async {
+        clearConfirmation = nil
+        do {
+            try await store.deleteAllUnpinned()
+        } catch {
+            log.error("clear failed: \(error, privacy: .public)")
+        }
+        await reload()
+        scrollToTop += 1
     }
 
     // MARK: - 类型菜单

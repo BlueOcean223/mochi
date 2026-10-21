@@ -39,24 +39,34 @@ final class PanelController: NSObject, NSWindowDelegate {
     let model: PanelModel
     private let panel = ClipPanel()
     private let settings: Settings
+    private let paster: Paster
+    private let hud: HUD
+    private let quickLook = QuickLook()
     private var wantsVisible = false
     private var keyMonitor: Any?
 
-    /// 调试脚本在跑（`Drive`）：面板压在桌面壁纸下面，用户看不见；不抢键盘、不接鼠标，失焦也不收起。
+    /// 调试脚本在跑（`Drive`）：面板压在桌面壁纸下面，用户看不见；不抢键盘、不接鼠标，失焦也不收起；
+    /// 不发 ⌘V，不打开 Finder、浏览器。
     var isQuiet = false {
         didSet {
             panel.level = isQuiet ? NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)) - 1) : .floating
             panel.ignoresMouseEvents = isQuiet
+            quickLook.level = panel.level
+            paster.isQuiet = isQuiet
+            hud.isQuiet = isQuiet
         }
     }
 
-    init(store: ClipStore, settings: Settings) {
+    init(store: ClipStore, settings: Settings, paster: Paster, hud: HUD) {
         model = PanelModel(store: store)
         self.settings = settings
+        self.paster = paster
+        self.hud = hud
         super.init()
         panel.delegate = self
         panel.contentView = makeContentView()
         model.perform = { [weak self] command in self?.perform(command) }
+        model.selectionChanged = { [weak self] clip in self?.followSelection(clip) }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.panel else { return event }
             return self.handleKey(event) ? nil : event
@@ -65,6 +75,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     var windowNumber: Int { panel.windowNumber }
     var contentView: NSView? { panel.contentView }
+    var quickLookWindowNumber: Int { quickLook.windowNumber }
 
     private func makeContentView() -> NSView {
         let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: PanelMetrics.size))
@@ -92,7 +103,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         let frontApp = NSWorkspace.shared.frontmostApplication
         Task {
             // 先把第一页读好再显示，免得先露出上次的列表再跳。
-            await model.prepare(isPaused: settings.isPaused, frontAppName: frontApp?.localizedName)
+            await model.prepare(isPaused: settings.isPaused, frontAppName: frontApp?.localizedName, canPaste: paster.canPaste)
             guard wantsVisible else { return }
             panel.setFrameOrigin(origin())
             if isQuiet {
@@ -108,6 +119,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     func hide() {
         wantsVisible = false
         model.isTypeMenuOpen = false
+        model.cancelClear()
+        quickLook.close()
         panel.orderOut(nil)
     }
 
@@ -143,6 +156,19 @@ final class PanelController: NSObject, NSWindowDelegate {
         // 输入法正在拼字时方向键、回车是给输入法的。
         if let editor = panel.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
         let command = PanelCommand(event)
+        if model.clearConfirmation != nil {
+            // 确认框开着时只认回车（清空）和 Esc（取消），别的键都吞掉。
+            if command == .paste {
+                Task { await model.confirmClear() }
+            } else if command == .escape {
+                model.cancelClear()
+            }
+            return true
+        }
+        if quickLook.isVisible, command == .escape {
+            quickLook.close()
+            return true
+        }
         if model.isTypeMenuOpen {
             switch command {
             case .down: model.moveTypeMenu(1)
@@ -169,8 +195,111 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .typeMenu: model.toggleTypeMenu()
         case .escape:
             if model.query.isEmpty { hide() } else { model.setQuery("") }
-        case .paste, .copy, .pastePlain, .pin, .delete, .clearAll, .quickLook, .revealInFinder, .openLink:
-            break  // 阶段 3
+        case .paste: paste(plainText: false, sendKeystroke: true)
+        case .pastePlain: paste(plainText: true, sendKeystroke: true)
+        case .copy: paste(plainText: false, sendKeystroke: false)
+        case .pin: Task { await model.togglePin() }
+        case .delete: Task { await model.deleteSelected() }
+        case .clearAll:
+            Task {
+                if await !model.askToClear() { hud.show("没有可以清空的，置顶的不删") }
+            }
+        case .quickLook: toggleQuickLook()
+        case .revealInFinder: revealInFinder()
+        case .openLink: openLink()
+        case .openAccessibilitySettings:
+            hide()
+            paster.openAccessibilitySettings()
+        }
+    }
+
+    // MARK: - 操作
+
+    /// 回车粘贴、⇧↵ 粘贴纯文本、⌘↵ 只复制。先收起面板，键盘焦点回到前台应用，写好剪切板再替用户按 ⌘V。
+    /// 没有辅助功能权限时只复制，提示一句，再弹一次系统的授权提示。
+    private func paste(plainText: Bool, sendKeystroke: Bool) {
+        guard let clip = model.selectedClip else { return }
+        hide()
+        Task {
+            var note: String?
+            switch await paster.write(clip, plainText: plainText && clip.kind == .text) {
+            case .written:
+                break
+            case .failed:
+                hud.show("没能写进剪切板")
+                return
+            case .missingFiles(let missing, let total) where missing == total:
+                hud.show(total == 1 ? "文件已经不在了" : "这些文件都已经不在了")
+                return
+            case .missingFiles(let missing, _):
+                note = "有 \(missing) 个文件已经不在了"
+            }
+            if !sendKeystroke {
+                hud.show(note.map { "已复制，\($0)" } ?? "已复制到剪切板")
+            } else if paster.canPaste {
+                await paster.sendPasteKeystroke()
+                if let note { hud.show(note) }
+            } else {
+                hud.show("已复制。没有辅助功能权限，要自己按 ⌘V")
+                paster.requestPermissionOnce()
+            }
+        }
+    }
+
+    private func revealInFinder() {
+        guard let clip = model.selectedClip, clip.kind == .file else { return }
+        let urls = clip.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+        hide()
+        if urls.isEmpty {
+            hud.show(clip.fileURLs.count == 1 ? "文件已经不在了" : "这些文件都已经不在了")
+        } else if isQuiet {
+            print("panel: 不打开 Finder（调试脚本）：\(urls.map(\.path))")
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        }
+    }
+
+    private func openLink() {
+        guard let clip = model.selectedClip, clip.isLink,
+              let url = URL(string: clip.title.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        hide()
+        if isQuiet {
+            print("panel: 不打开浏览器（调试脚本）：\(url)")
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// 图片条目看存下的图，文件条目看第一个还在的文件。
+    private func quickLookURL(_ clip: Clip?) -> URL? {
+        switch clip?.kind {
+        case .image: clip?.imageURL
+        case .file: clip?.fileURLs.first { FileManager.default.fileExists(atPath: $0.path) }
+        default: nil
+        }
+    }
+
+    private func imageSize(_ clip: Clip?) -> CGSize? {
+        guard let clip, clip.kind == .image, let width = clip.imageWidth, let height = clip.imageHeight else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    private func toggleQuickLook() {
+        if quickLook.isVisible {
+            quickLook.close()
+        } else if let url = quickLookURL(model.selectedClip) {
+            quickLook.show(url, imageSize: imageSize(model.selectedClip), over: panel)
+            if isQuiet { print("panel: quick look \(url.lastPathComponent) visible=\(quickLook.isVisible) window=\(quickLook.windowNumber)") }
+        }
+    }
+
+    /// Quick Look 开着时上下键换一条，它跟着换；换到文本就关掉。
+    private func followSelection(_ clip: Clip?) {
+        guard quickLook.isVisible else { return }
+        if let url = quickLookURL(clip) {
+            quickLook.show(url, imageSize: imageSize(clip), over: panel)
+        } else {
+            quickLook.close()
         }
     }
 }

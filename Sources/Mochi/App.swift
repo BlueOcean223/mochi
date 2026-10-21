@@ -44,15 +44,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.runModal()
             return
         }
-        let recorder = Recorder(store: store, settings: settings, pasteboard: pasteboard())
+        let pasteboard = pasteboard()
+        let recorder = Recorder(store: store, settings: settings, pasteboard: pasteboard)
         recorder.start()
         self.recorder = recorder
         log.notice("recording into \(directory.path, privacy: .public)")
-        let panel = PanelController(store: store, settings: settings)
+        let paster = Paster(store: store, pasteboard: pasteboard, recorder: recorder)
+        let panel = PanelController(store: store, settings: settings, paster: paster, hud: HUD())
         self.panel = panel
 
         #if DEBUG
-        if let drive = Drive(panel: panel) {
+        if let drive = Drive(panel: panel, pasteboard: pasteboard) {
             Task {
                 await Fixtures.seedIfRequested(store)
                 await drive.run()

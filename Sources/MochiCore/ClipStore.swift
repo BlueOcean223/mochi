@@ -275,7 +275,20 @@ public actor ClipStore {
         return try statement.step() ? Int(statement.int(0)) : 0
     }
 
+    /// 清空全部会删掉的条数。
+    public func unpinnedCount() throws -> Int {
+        let statement = try db.prepare("SELECT count(*) FROM clips WHERE pinned_at IS NULL")
+        return try statement.step() ? Int(statement.int(0)) : 0
+    }
+
     // MARK: - 改
+
+    /// 从面板里粘贴、复制过的挪到最前，和再复制一遍一样；来源应用不变。
+    public func touch(id: Int64, at date: Date = .now) throws {
+        try db.prepare("UPDATE clips SET last_copied_at = ?1 WHERE id = ?2")
+            .bind(.double(date.timeIntervalSince1970), .int(id))
+            .run()
+    }
 
     public func setPinned(_ pinned: Bool, id: Int64) throws {
         try db.prepare("UPDATE clips SET pinned_at = ?1 WHERE id = ?2")

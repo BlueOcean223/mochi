@@ -29,6 +29,11 @@ final class Recorder {
         purge()
     }
 
+    /// Mochi 自己刚往剪切板上写了东西（粘贴、复制历史里的一条），这次变化不记，不然来源会记成当前的前台应用。
+    func ignoreCurrentChange() {
+        lastChangeCount = pasteboard.changeCount
+    }
+
     private func schedule(every interval: TimeInterval, tolerance: TimeInterval, _ action: @escaping @MainActor () -> Void) -> Timer {
         let timer = Timer(timeInterval: interval, repeats: true) { _ in MainActor.assumeIsolated(action) }
         timer.tolerance = tolerance

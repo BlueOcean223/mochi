@@ -178,3 +178,26 @@ private func tiff(width: Int, height: Int) throws -> Data {
     let clips = try await t.store.list()
     #expect(clips.map(\.isLink) == [false, false, true])
 }
+
+@Test func touchMovesToTopAndKeepsSource() async throws {
+    let t = try TempStore()
+    let base = Date(timeIntervalSince1970: 1_000_000)
+    try await t.store.record(text("old", at: base, from: "com.apple.Safari"))
+    try await t.store.record(text("new", at: base + 10))
+    let old = try #require(try await t.store.list().last)
+    try await t.store.touch(id: old.id, at: base + 20)
+    let clips = try await t.store.list()
+    #expect(clips.map(\.title) == ["old", "new"])
+    #expect(clips[0].sourceBundleID == "com.apple.Safari")
+    #expect(clips[0].firstCopiedAt == base)
+}
+
+@Test func unpinnedCountSkipsPinned() async throws {
+    let t = try TempStore()
+    try await t.store.record(text("a"))
+    try await t.store.record(text("b"))
+    try await t.store.record(text("c"))
+    let first = try #require(try await t.store.list().first)
+    try await t.store.setPinned(true, id: first.id)
+    #expect(try await t.store.unpinnedCount() == 2)
+}

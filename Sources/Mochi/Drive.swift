@@ -16,25 +16,32 @@ import UniformTypeIdentifiers
 ///     show                    呼出面板（放在屏幕外面，不是 key 窗口）
 ///     hide
 ///     key down                按键，走和真实按键一样的 PanelController.handleKey：
-///                             down up cmd-down cmd-up enter cmd-enter esc cmd-p
+///                             down up cmd-down cmd-up enter cmd-enter shift-enter esc cmd-p
+///                             cmd-dot ctrl-x ctrl-shift-x cmd-y cmd-o shift-cmd-f
+///     clipboard               打印剪切板（`MOCHI_PASTEBOARD` 那个）上的类型和文字
 ///     type 关键词             把搜索框改成这个（空着就是清空）
+///     select 关键词           选中标题里有这个词的第一条（假数据的时间跟着当前时间走，按位置找不稳）
 ///     appearance dark|light
 ///     wait 300                毫秒
-///     shot 名字               截面板，存成 截图目录/名字.png
+///     shot 名字               截面板，存成 截图目录/名字.png。宿主终端有屏幕录制权限时用 screencapture 截真窗口，
+///                             没有时在应用里画（画不出毛玻璃、vibrancy）
+///     shot-quicklook 名字     截 Quick Look 窗口（只能用 screencapture）
 ///     quit
 @MainActor
 final class Drive {
     private let lines: [String]
     private let panel: PanelController
+    private let pasteboard: NSPasteboard
     private let shots: URL
 
-    init?(panel: PanelController) {
+    init?(panel: PanelController, pasteboard: NSPasteboard) {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MOCHI_DRIVE"], let script = try? String(contentsOfFile: path, encoding: .utf8) else {
             return nil
         }
         lines = script.split(whereSeparator: \.isNewline).map(String.init)
         self.panel = panel
+        self.pasteboard = pasteboard
         shots = URL(filePath: environment["MOCHI_SHOTS"] ?? "/tmp/mochi-shots", directoryHint: .isDirectory)
         panel.isQuiet = true
     }
@@ -52,9 +59,24 @@ final class Drive {
             case "hide": panel.hide()
             case "key": key(argument)
             case "type": panel.model.setQuery(argument)
+            case "clipboard":
+                let types = pasteboard.types?.map(\.rawValue) ?? []
+                print("drive: clipboard types=\(types) string=\(pasteboard.string(forType: .string) ?? "nil")")
             case "appearance": NSApp.appearance = NSAppearance(named: argument == "light" ? .aqua : .darkAqua)
             case "wait": try? await Task.sleep(for: .milliseconds(Int(argument) ?? 0))
-            case "shot": await shot(argument)
+            case "select":
+                if let clip = panel.model.clips.first(where: { $0.title.contains(argument) }) {
+                    panel.model.select(clip.id)
+                } else {
+                    print("drive: 没有标题里有「\(argument)」的")
+                }
+            case "shot":
+                if CGPreflightScreenCaptureAccess() {
+                    await capture(window: panel.windowNumber, name: argument)
+                } else {
+                    await shot(argument)
+                }
+            case "shot-quicklook": await capture(window: panel.quickLookWindowNumber, name: argument)
             case "quit": NSApp.terminate(nil)
             default: print("drive: 不认识的命令 \(command)")
             }
@@ -68,7 +90,10 @@ final class Drive {
             "down": (kVK_DownArrow, []), "up": (kVK_UpArrow, []),
             "cmd-down": (kVK_DownArrow, .command), "cmd-up": (kVK_UpArrow, .command),
             "enter": (kVK_Return, []), "cmd-enter": (kVK_Return, .command),
-            "esc": (kVK_Escape, []), "cmd-p": (kVK_ANSI_P, .command),
+            "shift-enter": (kVK_Return, .shift), "esc": (kVK_Escape, []), "cmd-p": (kVK_ANSI_P, .command),
+            "cmd-dot": (kVK_ANSI_Period, .command), "ctrl-x": (kVK_ANSI_X, .control),
+            "ctrl-shift-x": (kVK_ANSI_X, [.control, .shift]), "cmd-y": (kVK_ANSI_Y, .command),
+            "cmd-o": (kVK_ANSI_O, .command), "shift-cmd-f": (kVK_ANSI_F, [.command, .shift]),
         ]
         guard let (code, modifiers) = keys[name],
               let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
@@ -78,6 +103,22 @@ final class Drive {
             return
         }
         if !panel.handleKey(event) { print("drive: \(name) 没被面板处理") }
+    }
+
+    private func capture(window: Int, name: String) async {
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/sbin/screencapture")
+        process.arguments = ["-x", "-o", "-l\(window)", shots.appending(path: "\(name).png").path]
+        let errors = Pipe()
+        process.standardError = errors
+        do {
+            try process.run()
+            while process.isRunning { try? await Task.sleep(for: .milliseconds(20)) }
+            let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            print(process.terminationStatus == 0 ? "drive: shot \(name).png" : "drive: screencapture 失败：\(message)")
+        } catch {
+            print("drive: screencapture 跑不起来：\(error)")
+        }
     }
 
     /// 在应用里把面板的视图画成 PNG（二倍）。不用 screencapture：它要宿主终端有屏幕录制权限。

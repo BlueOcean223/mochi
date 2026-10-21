@@ -47,6 +47,11 @@ struct PanelView: View {
             }
         }
         .overlay {
+            if let count = model.clearConfirmation {
+                ClearConfirmation(model: model, count: count)
+            }
+        }
+        .overlay {
             RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
         }
@@ -175,6 +180,7 @@ private struct ClipList: View {
                         case .clip(let clip):
                             ClipRow(clip: clip, isSelected: clip.id == model.selectedID)
                                 .onTapGesture { model.select(clip.id) }
+                                .simultaneousGesture(TapGesture(count: 2).onEnded { model.perform?(.paste) })
                                 .onAppear { model.rowAppeared(clip) }
                         }
                     }
@@ -198,6 +204,15 @@ private struct ClipList: View {
             }
             .onChange(of: model.scrollToTop) {
                 proxy.scrollTo(Row.ID.top, anchor: .top)
+            }
+            .onChange(of: model.scrollToSelection) {
+                guard let id = model.selectedID else { return }
+                // 置顶以后它到了第一组，滚到顶；取消置顶以后它回到时间里的位置。
+                if model.groups.first?.clips.first?.id == id {
+                    proxy.scrollTo(Row.ID.top, anchor: .top)
+                } else {
+                    proxy.scrollTo(Row.ID.clip(id))
+                }
             }
         }
     }
@@ -485,6 +500,64 @@ private struct InfoRow<Value: View>: View {
     }
 }
 
+/// 清空前问一句。回车清空、Esc 取消（PanelController.handleKey）。
+private struct ClearConfirmation: View {
+    let model: PanelModel
+    let count: Int
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.25)
+                .onTapGesture { model.cancelClear() }
+            VStack(spacing: 4) {
+                Text("清空全部记录？")
+                    .font(.system(size: 15, weight: .semibold))
+                Text(verbatim: "会删掉 \(count) 条，置顶的留着。删了找不回来。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 8) {
+                    Button { model.cancelClear() } label: {
+                        ConfirmButtonLabel(title: "取消", key: "esc", isDestructive: false)
+                    }
+                    Button { Task { await model.confirmClear() } } label: {
+                        ConfirmButtonLabel(title: "清空", key: "↵", isDestructive: true)
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 12)
+            }
+            .padding(18)
+            .frame(width: 300)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
+        }
+    }
+}
+
+private struct ConfirmButtonLabel: View {
+    let title: String
+    let key: String
+    let isDestructive: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title)
+            Text(key)
+                .font(.system(size: 11))
+                .opacity(0.7)
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(isDestructive ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .frame(maxWidth: .infinity)
+        .frame(height: 30)
+        .background(isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(Color.primary.opacity(0.1)),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+    }
+}
+
 // MARK: - 底栏
 
 private struct Footer: View {
@@ -493,7 +566,16 @@ private struct Footer: View {
     var body: some View {
         HStack(spacing: 4) {
             HStack(spacing: 14) {
-                if model.isPaused {
+                if !model.canPaste {
+                    HStack(spacing: 6) {
+                        Circle().fill(.orange).frame(width: 7, height: 7)
+                        Text("没有辅助功能权限").foregroundStyle(.orange)
+                    }
+                    Text("回车只复制")
+                    Button("去授权") { model.perform?(.openAccessibilitySettings) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                } else if model.isPaused {
                     HStack(spacing: 6) {
                         Circle().fill(.orange).frame(width: 7, height: 7)
                         Text("暂停记录中").foregroundStyle(.orange)
@@ -512,10 +594,14 @@ private struct Footer: View {
             .lineLimit(1)
             Spacer(minLength: 8)
             if model.selectedClip != nil {
-                FooterButton(title: model.frontAppName.map { "粘贴到 \($0)" } ?? "粘贴", key: "↵", isPrimary: true) {
-                    model.perform?(.paste)
+                if model.canPaste {
+                    FooterButton(title: model.frontAppName.map { "粘贴到 \($0)" } ?? "粘贴", key: "↵", isPrimary: true) {
+                        model.perform?(.paste)
+                    }
+                    FooterButton(title: "复制", key: "⌘↵") { model.perform?(.copy) }
+                } else {
+                    FooterButton(title: "复制", key: "↵", isPrimary: true) { model.perform?(.copy) }
                 }
-                FooterButton(title: "复制", key: "⌘↵") { model.perform?(.copy) }
             }
         }
         .font(.system(size: 13))
