@@ -1,12 +1,12 @@
 import AppKit
 import os
 
-let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.blueocean223.clipboard", category: "app")
+let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.blueocean223.mochi", category: "app")
 
 // 入口。不用 SwiftUI 的 App 和 storyboard，生命周期交给 AppKit：
 // 面板、热键、菜单栏都要直接管 NSWindow / NSStatusItem，SwiftUI 只画面板里的内容。
 @main
-enum ClipboardApp {
+enum MochiApp {
     static func main() {
         MainActor.assumeIsolated {
             let app = NSApplication.shared

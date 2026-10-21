@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Clipboard",
+    name: "Mochi",
     platforms: [.macOS(.v26)],
     targets: [
         .executableTarget(
-            name: "Clipboard",
-            path: "Sources/Clipboard"
+            name: "Mochi",
+            path: "Sources/Mochi"
         ),
     ]
 )
