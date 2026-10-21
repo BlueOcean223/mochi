@@ -124,7 +124,7 @@ public enum Classifier {
     }
 
     /// 整段只是一个 http(s) 网址。
-    static func isLink(_ text: String) -> Bool {
+    public static func isLink(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains(where: \.isWhitespace), let url = URL(string: trimmed) else { return false }
         return url.scheme == "http" || url.scheme == "https"

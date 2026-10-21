@@ -168,3 +168,13 @@ private func tiff(width: Int, height: Int) throws -> Data {
     #expect(try await reopened.list().map(\.title) == ["persisted"])
     #expect(try await reopened.text(of: try await reopened.list()[0].id) == "persisted")
 }
+
+@Test func linkOnlyWhenWholeTextIsOneURL() async throws {
+    let t = try TempStore()
+    try await t.store.record(text("https://example.com/a?b=1"))
+    try await t.store.record(text("看这个 https://example.com"))
+    // 比标题长的文本：标题只是开头，开头像网址也不算。
+    try await t.store.record(text("https://example.com/" + String(repeating: "a", count: 400)))
+    let clips = try await t.store.list()
+    #expect(clips.map(\.isLink) == [false, false, true])
+}

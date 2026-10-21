@@ -23,6 +23,13 @@ public struct Clip: Sendable, Identifiable, Equatable {
     public let lastCopiedAt: Date
 }
 
+extension Clip {
+    /// 整段只是一个网址的文本条目。标题是全文的前 300 个字符，字符数和标题一样长时标题就是全文。
+    public var isLink: Bool {
+        kind == .text && characterCount == title.count && Classifier.isLink(title)
+    }
+}
+
 public enum RecordResult: Sendable, Equatable {
     case inserted(Int64)
     /// 同样的内容已经有了，挪到最前。

@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import MochiCore
 import os
 
@@ -23,17 +24,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = Settings()
     private var statusMenu: StatusMenu?
     private var recorder: Recorder?
+    private var panel: PanelController?
+    private var hotKey: HotKey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logPasteboardAccess()
-        statusMenu = StatusMenu(settings: settings)
+        NSApp.mainMenu = makeMainMenu()
+        statusMenu = StatusMenu(settings: settings) { [weak self] in self?.panel?.show() }
         let directory = dataDirectory()
+        let store: ClipStore
         do {
-            let store = try ClipStore(directory: directory)
-            let recorder = Recorder(store: store, settings: settings, pasteboard: pasteboard())
-            recorder.start()
-            self.recorder = recorder
-            log.notice("recording into \(directory.path, privacy: .public)")
+            store = try ClipStore(directory: directory)
         } catch {
             log.error("open store failed: \(error, privacy: .public)")
             let alert = NSAlert()
@@ -41,8 +42,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.informativeText = "\(directory.path)\n\n\(error)"
             NSApp.activate()
             alert.runModal()
+            return
+        }
+        let recorder = Recorder(store: store, settings: settings, pasteboard: pasteboard())
+        recorder.start()
+        self.recorder = recorder
+        log.notice("recording into \(directory.path, privacy: .public)")
+        let panel = PanelController(store: store, settings: settings)
+        self.panel = panel
+
+        #if DEBUG
+        if let drive = Drive(panel: panel) {
+            Task {
+                await Fixtures.seedIfRequested(store)
+                await drive.run()
+            }
+            return  // 跑脚本时不占全局快捷键，免得和正在用的 Mochi 抢。
+        }
+        #endif
+        hotKey = HotKey(keyCode: kVK_ANSI_V, modifiers: controlKey | cmdKey) { [weak panel] in panel?.toggle() }
+        if hotKey == nil {
+            log.error("hot key ⌃⌘V is taken")
         }
     }
+}
+
+/// 没有菜单栏菜单的应用也要一个主菜单：搜索框里的 ⌘V、⌘A、⌘Z 是靠主菜单「编辑」里的项派发的。
+private func makeMainMenu() -> NSMenu {
+    let edit = NSMenu(title: "编辑")
+    edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+    edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+    edit.addItem(.separator())
+    edit.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    edit.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    edit.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    edit.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    let app = NSMenu(title: "Mochi")
+    app.addItem(withTitle: "退出 Mochi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    let menu = NSMenu()
+    for submenu in [app, edit] {
+        let item = NSMenuItem()
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+    return menu
 }
 
 /// 数据放在 `~/Library/Application Support/<bundle id>/`。

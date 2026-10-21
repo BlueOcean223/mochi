@@ -6,9 +6,11 @@ final class StatusMenu: NSObject {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let settings: Settings
     private let pauseItem = NSMenuItem(title: "", action: #selector(togglePause), keyEquivalent: "")
+    private let openPanel: () -> Void
 
-    init(settings: Settings) {
+    init(settings: Settings, openPanel: @escaping () -> Void) {
         self.settings = settings
+        self.openPanel = openPanel
         super.init()
         let image = NSImage(systemSymbolName: "list.clipboard", accessibilityDescription: "Mochi")
         image?.isTemplate = true
@@ -16,7 +18,10 @@ final class StatusMenu: NSObject {
 
         let menu = NSMenu()
         menu.autoenablesItems = false
-        menu.addItem(placeholder("打开剪切板历史"))  // 阶段 2
+        let openItem = NSMenuItem(title: "打开剪切板历史", action: #selector(open), keyEquivalent: "v")
+        openItem.keyEquivalentModifierMask = [.control, .command]
+        openItem.target = self
+        menu.addItem(openItem)
         pauseItem.target = self
         menu.addItem(pauseItem)
         menu.addItem(.separator())
@@ -25,6 +30,10 @@ final class StatusMenu: NSObject {
         menu.addItem(NSMenuItem(title: "退出 Mochi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
         updatePauseItem()
+    }
+
+    @objc private func open() {
+        openPanel()
     }
 
     @objc private func togglePause() {
