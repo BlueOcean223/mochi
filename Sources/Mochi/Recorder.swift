@@ -80,7 +80,8 @@ final class Recorder {
         return PasteboardSnapshot(items: snapshotItems, sourceBundleID: sourceBundleID, sourceName: sourceName)
     }
 
-    private func purge() {
+    /// 按现在的保留时长清掉过期的。设置里改了保留时长也调它。
+    func purge() {
         guard let cutoff = settings.retention.cutoff() else { return }
         Task { [store] in
             do {

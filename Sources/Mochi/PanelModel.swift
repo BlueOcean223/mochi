@@ -59,6 +59,8 @@ enum PanelCommand {
     case paste, copy, pastePlain, pin, delete, clearAll, quickLook, revealInFinder, openLink
     /// 底栏「去授权」：打开系统设置的辅助功能页。
     case openAccessibilitySettings
+    /// ⌘,：收起面板，打开设置窗口。
+    case settings
 }
 
 /// 面板的状态：搜索词、类型筛选、当前这一页、选中哪条、预览。界面只读它，改都走这里的方法。

@@ -44,6 +44,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     private let quickLook = QuickLook()
     private var wantsVisible = false
     private var keyMonitor: Any?
+    var openSettings: (() -> Void)?
 
     /// 调试脚本在跑（`Drive`）：面板压在桌面壁纸下面，用户看不见；不抢键盘、不接鼠标，失焦也不收起；
     /// 不发 ⌘V，不打开 Finder、浏览器。
@@ -210,6 +211,9 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .openAccessibilitySettings:
             hide()
             paster.openAccessibilitySettings()
+        case .settings:
+            hide()
+            openSettings?()
         }
     }
 
@@ -330,6 +334,8 @@ extension PanelCommand {
             command = modifiers == [.command, .shift] ? .revealInFinder : nil
         case kVK_ANSI_O:
             command = modifiers == .command ? .openLink : nil
+        case kVK_ANSI_Comma:
+            command = modifiers == .command ? .settings : nil
         default:
             command = nil
         }

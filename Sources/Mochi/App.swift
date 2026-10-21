@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 import MochiCore
 import os
 
@@ -21,16 +20,21 @@ enum MochiApp {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let settings = Settings()
+    private let settings = Settings(defaults: userDefaults())
     private var statusMenu: StatusMenu?
     private var recorder: Recorder?
     private var panel: PanelController?
-    private var hotKey: HotKey?
+    private var hotKey: PanelHotKey?
+    private var settingsWindow: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logPasteboardAccess()
         NSApp.mainMenu = makeMainMenu()
-        statusMenu = StatusMenu(settings: settings) { [weak self] in self?.panel?.show() }
+        // 跑调试脚本时不放菜单栏图标，不然菜单栏上会多出一个 Mochi。
+        if !isDriving {
+            statusMenu = StatusMenu(settings: settings, openPanel: { [weak self] in self?.panel?.show() },
+                                    openSettings: { [weak self] in self?.settingsWindow?.show() })
+        }
         let directory = dataDirectory()
         let store: ClipStore
         do {
@@ -52,24 +56,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let paster = Paster(store: store, pasteboard: pasteboard, recorder: recorder)
         let panel = PanelController(store: store, settings: settings, paster: paster, hud: HUD())
         self.panel = panel
+        let hotKey = PanelHotKey(settings: settings) { [weak panel] in panel?.toggle() }
+        hotKey.changed = { [weak self] shortcut in self?.statusMenu?.showShortcut(shortcut) }
+        self.hotKey = hotKey
+        let settingsWindow = SettingsWindowController(
+            model: SettingsModel(settings: settings, store: store, recorder: recorder, hotKey: hotKey, paster: paster))
+        self.settingsWindow = settingsWindow
+        panel.openSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
         #if DEBUG
-        if let drive = Drive(panel: panel, pasteboard: pasteboard) {
+        if let drive = Drive(panel: panel, settingsWindow: settingsWindow, pasteboard: pasteboard) {
+            hotKey.isQuiet = true  // 跑脚本时不占全局快捷键，免得和正在用的 Mochi 抢。
             Task {
                 await Fixtures.seedIfRequested(store)
                 await drive.run()
             }
-            return  // 跑脚本时不占全局快捷键，免得和正在用的 Mochi 抢。
+            return
         }
         #endif
-        hotKey = HotKey(keyCode: kVK_ANSI_V, modifiers: controlKey | cmdKey) { [weak panel] in panel?.toggle() }
-        if hotKey == nil {
-            log.error("hot key ⌃⌘V is taken")
-        }
+        hotKey.register()
     }
 }
 
-/// 没有菜单栏菜单的应用也要一个主菜单：搜索框里的 ⌘V、⌘A、⌘Z 是靠主菜单「编辑」里的项派发的。
+/// 没有菜单栏菜单的应用也要一个主菜单：搜索框里的 ⌘V、⌘A、⌘Z 是靠主菜单「编辑」里的项派发的，设置窗口的 ⌘W 也是。
 private func makeMainMenu() -> NSMenu {
     let edit = NSMenu(title: "编辑")
     edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
@@ -79,15 +88,37 @@ private func makeMainMenu() -> NSMenu {
     edit.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
     edit.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
     edit.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    let window = NSMenu(title: "窗口")
+    window.addItem(withTitle: "关闭", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
     let app = NSMenu(title: "Mochi")
     app.addItem(withTitle: "退出 Mochi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     let menu = NSMenu()
-    for submenu in [app, edit] {
+    for submenu in [app, edit, window] {
         let item = NSMenuItem()
         item.submenu = submenu
         menu.addItem(item)
     }
     return menu
+}
+
+private var isDriving: Bool {
+    #if DEBUG
+    Drive.isRequested
+    #else
+    false
+    #endif
+}
+
+/// 调试脚本用单独的一份设置，每次清空：不读也不改用户的设置。
+private func userDefaults() -> UserDefaults {
+    #if DEBUG
+    let suite = "com.blueocean223.mochi.drive"
+    if Drive.isRequested, let defaults = UserDefaults(suiteName: suite) {
+        defaults.removePersistentDomain(forName: suite)
+        return defaults
+    }
+    #endif
+    return .standard
 }
 
 /// 数据放在 `~/Library/Application Support/<bundle id>/`。

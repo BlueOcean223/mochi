@@ -102,6 +102,7 @@ private func tiff(width: Int, height: Int) throws -> Data {
     try await t.store.setPinned(true, id: pinnedID)
     #expect(try await t.store.list().map(\.title) == ["pinned old", "new", "old"])
 
+    #expect(try await t.store.expiredCount(before: old + 100) == 1)
     #expect(try await t.store.purge(before: old + 100) == 1)
     #expect(try await t.store.list().map(\.title) == ["pinned old", "new"])
 

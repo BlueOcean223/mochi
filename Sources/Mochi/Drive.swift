@@ -15,9 +15,9 @@ import UniformTypeIdentifiers
 ///
 ///     show                    呼出面板（放在屏幕外面，不是 key 窗口）
 ///     hide
-///     key down                按键，走和真实按键一样的 PanelController.handleKey：
-///                             down up cmd-down cmd-up enter cmd-enter shift-enter esc cmd-p
-///                             cmd-dot ctrl-x ctrl-shift-x cmd-y cmd-o shift-cmd-f
+///     key down                按键，走和真实按键一样的 PanelController.handleKey。写法是修饰键（ctrl alt shift cmd）
+///                             加键名，比如 cmd-down、ctrl-shift-x、cmd-dot、cmd-comma；键名有字母、数字、f1–f12、
+///                             up down left right enter esc space tab dot comma
 ///     clipboard               打印剪切板（`MOCHI_PASTEBOARD` 那个）上的类型和文字
 ///     type 关键词             把搜索框改成这个（空着就是清空）
 ///     select 关键词           选中标题里有这个词的第一条（假数据的时间跟着当前时间走，按位置找不稳）
@@ -26,24 +26,38 @@ import UniformTypeIdentifiers
 ///     shot 名字               截面板，存成 截图目录/名字.png。宿主终端有屏幕录制权限时用 screencapture 截真窗口，
 ///                             没有时在应用里画（画不出毛玻璃、vibrancy）
 ///     shot-quicklook 名字     截 Quick Look 窗口（只能用 screencapture）
+///     settings                打开设置窗口（也压在桌面下面）
+///     settings-close
+///     record                  开始录呼出快捷键
+///     press ctrl-alt-k        录快捷键时按键，写法同 key；只写修饰键（ctrl-cmd）是按住修饰键
+///     retention 7             选保留时长（天数，0 是永久），要删记录时会弹确认
+///     retention-confirm       确认框里点「删掉」；retention-cancel 点「取消」
+///     ignore /路径/某个.app    加进忽略的应用；unignore bundle-id 移除
+///     login on|off            开机启动开关（不真的改登录项）
+///     shot-settings 名字      截设置窗口；有确认框时另存一张 名字-sheet.png
 ///     quit
 @MainActor
 final class Drive {
     private let lines: [String]
     private let panel: PanelController
+    private let settingsWindow: SettingsWindowController
     private let pasteboard: NSPasteboard
     private let shots: URL
 
-    init?(panel: PanelController, pasteboard: NSPasteboard) {
+    nonisolated static var isRequested: Bool { ProcessInfo.processInfo.environment["MOCHI_DRIVE"] != nil }
+
+    init?(panel: PanelController, settingsWindow: SettingsWindowController, pasteboard: NSPasteboard) {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MOCHI_DRIVE"], let script = try? String(contentsOfFile: path, encoding: .utf8) else {
             return nil
         }
         lines = script.split(whereSeparator: \.isNewline).map(String.init)
         self.panel = panel
+        self.settingsWindow = settingsWindow
         self.pasteboard = pasteboard
         shots = URL(filePath: environment["MOCHI_SHOTS"] ?? "/tmp/mochi-shots", directoryHint: .isDirectory)
         panel.isQuiet = true
+        settingsWindow.isQuiet = true
     }
 
     func run() async {
@@ -77,6 +91,25 @@ final class Drive {
                     await shot(argument)
                 }
             case "shot-quicklook": await capture(window: panel.quickLookWindowNumber, name: argument)
+            case "settings": settingsWindow.show()
+            case "settings-close": settingsWindow.close()
+            case "record": settings.startRecording()
+            case "press":
+                if let event = event(argument, window: settingsWindow.windowNumber ?? 0) {
+                    settings.isRecording ? settings.handleRecording(event) : print("drive: 没在录快捷键")
+                }
+            case "retention":
+                if let retention = Retention(rawValue: Int(argument) ?? -1) { settings.chooseRetention(retention) }
+            case "retention-confirm": settings.confirmRetentionChange()
+            case "retention-cancel": settings.retentionChange = nil
+            case "ignore": settings.ignoreApps(at: [URL(filePath: argument)])
+            case "unignore": settings.stopIgnoring(argument)
+            case "login": settings.setLaunchAtLogin(argument == "on")
+            case "shot-settings":
+                if let window = settingsWindow.windowNumber { await capture(window: window, name: argument) }
+                // 确认框是另一个窗口，弹出来要一会儿。
+                try? await Task.sleep(for: .milliseconds(300))
+                if let sheet = settingsWindow.sheetWindowNumber { await capture(window: sheet, name: "\(argument)-sheet") }
             case "quit": NSApp.terminate(nil)
             default: print("drive: 不认识的命令 \(command)")
             }
@@ -85,25 +118,49 @@ final class Drive {
         }
     }
 
+    private var settings: SettingsModel { settingsWindow.model }
+
     private func key(_ name: String) {
-        let keys: [String: (Int, NSEvent.ModifierFlags)] = [
-            "down": (kVK_DownArrow, []), "up": (kVK_UpArrow, []),
-            "cmd-down": (kVK_DownArrow, .command), "cmd-up": (kVK_UpArrow, .command),
-            "enter": (kVK_Return, []), "cmd-enter": (kVK_Return, .command),
-            "shift-enter": (kVK_Return, .shift), "esc": (kVK_Escape, []), "cmd-p": (kVK_ANSI_P, .command),
-            "cmd-dot": (kVK_ANSI_Period, .command), "ctrl-x": (kVK_ANSI_X, .control),
-            "ctrl-shift-x": (kVK_ANSI_X, [.control, .shift]), "cmd-y": (kVK_ANSI_Y, .command),
-            "cmd-o": (kVK_ANSI_O, .command), "shift-cmd-f": (kVK_ANSI_F, [.command, .shift]),
-        ]
-        guard let (code, modifiers) = keys[name],
-              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
-                                           windowNumber: panel.windowNumber, context: nil, characters: "",
-                                           charactersIgnoringModifiers: "", isARepeat: false, keyCode: UInt16(code)) else {
-            print("drive: 不认识的键 \(name)")
-            return
-        }
+        guard let event = event(name, window: panel.windowNumber) else { return }
         if !panel.handleKey(event) { print("drive: \(name) 没被面板处理") }
     }
+
+    /// 「ctrl-shift-x」：前面是修饰键，最后是键名。只有修饰键时是一个 flagsChanged（按住修饰键）。
+    private func event(_ name: String, window: Int) -> NSEvent? {
+        let modifierNames: [String: NSEvent.ModifierFlags] = ["ctrl": .control, "alt": .option, "shift": .shift, "cmd": .command]
+        var parts = name.split(separator: "-").map(String.init)
+        var modifiers: NSEvent.ModifierFlags = []
+        while let first = parts.first, let flag = modifierNames[first] {
+            modifiers.insert(flag)
+            parts.removeFirst()
+        }
+        let type: NSEvent.EventType = parts.isEmpty ? .flagsChanged : .keyDown
+        guard parts.count <= 1, let code = parts.isEmpty ? 0 : Self.keyCodes[parts[0]],
+              let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                                           windowNumber: window, context: nil, characters: "",
+                                           charactersIgnoringModifiers: "", isARepeat: false, keyCode: UInt16(code)) else {
+            print("drive: 不认识的键 \(name)")
+            return nil
+        }
+        return event
+    }
+
+    private static let keyCodes: [String: Int] = {
+        var codes = [
+            "up": kVK_UpArrow, "down": kVK_DownArrow, "left": kVK_LeftArrow, "right": kVK_RightArrow,
+            "enter": kVK_Return, "esc": kVK_Escape, "space": kVK_Space, "tab": kVK_Tab,
+            "dot": kVK_ANSI_Period, "comma": kVK_ANSI_Comma,
+        ]
+        let letters = [kVK_ANSI_A, kVK_ANSI_B, kVK_ANSI_C, kVK_ANSI_D, kVK_ANSI_E, kVK_ANSI_F, kVK_ANSI_G, kVK_ANSI_H, kVK_ANSI_I,
+                       kVK_ANSI_J, kVK_ANSI_K, kVK_ANSI_L, kVK_ANSI_M, kVK_ANSI_N, kVK_ANSI_O, kVK_ANSI_P, kVK_ANSI_Q, kVK_ANSI_R,
+                       kVK_ANSI_S, kVK_ANSI_T, kVK_ANSI_U, kVK_ANSI_V, kVK_ANSI_W, kVK_ANSI_X, kVK_ANSI_Y, kVK_ANSI_Z]
+        for (letter, code) in zip("abcdefghijklmnopqrstuvwxyz", letters) { codes[String(letter)] = code }
+        let digits = [kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
+        for (digit, code) in digits.enumerated() { codes[String(digit)] = code }
+        let functions = [kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10, kVK_F11, kVK_F12]
+        for (index, code) in functions.enumerated() { codes["f\(index + 1)"] = code }
+        return codes
+    }()
 
     private func capture(window: Int, name: String) async {
         let process = Process()

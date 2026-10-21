@@ -6,11 +6,14 @@ final class StatusMenu: NSObject {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let settings: Settings
     private let pauseItem = NSMenuItem(title: "", action: #selector(togglePause), keyEquivalent: "")
+    private let openItem = NSMenuItem(title: "打开剪切板历史", action: #selector(open), keyEquivalent: "")
     private let openPanel: () -> Void
+    private let openSettings: () -> Void
 
-    init(settings: Settings, openPanel: @escaping () -> Void) {
+    init(settings: Settings, openPanel: @escaping () -> Void, openSettings: @escaping () -> Void) {
         self.settings = settings
         self.openPanel = openPanel
+        self.openSettings = openSettings
         super.init()
         let image = NSImage(systemSymbolName: "list.clipboard", accessibilityDescription: "Mochi")
         image?.isTemplate = true
@@ -18,22 +21,33 @@ final class StatusMenu: NSObject {
 
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let openItem = NSMenuItem(title: "打开剪切板历史", action: #selector(open), keyEquivalent: "v")
-        openItem.keyEquivalentModifierMask = [.control, .command]
         openItem.target = self
         menu.addItem(openItem)
+        showShortcut(settings.shortcut)
         pauseItem.target = self
         menu.addItem(pauseItem)
         menu.addItem(.separator())
-        menu.addItem(placeholder("设置…", key: ","))  // 阶段 4
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 Mochi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
         updatePauseItem()
     }
 
+    /// 菜单里「打开剪切板历史」后面显示的是现在的呼出快捷键。
+    func showShortcut(_ shortcut: Shortcut) {
+        openItem.keyEquivalent = shortcut.menuKeyEquivalent
+        openItem.keyEquivalentModifierMask = shortcut.modifierFlags
+    }
+
     @objc private func open() {
         openPanel()
+    }
+
+    @objc private func showSettings() {
+        openSettings()
     }
 
     @objc private func togglePause() {
@@ -45,11 +59,5 @@ final class StatusMenu: NSObject {
     private func updatePauseItem() {
         pauseItem.title = settings.isPaused ? "恢复记录" : "暂停记录"
         item.button?.appearsDisabled = settings.isPaused
-    }
-
-    private func placeholder(_ title: String, key: String = "") -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: key)
-        item.isEnabled = false
-        return item
     }
 }

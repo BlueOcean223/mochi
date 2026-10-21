@@ -14,7 +14,7 @@ enum Retention: Int, CaseIterable {
     }
 }
 
-/// 用户设置，存在 UserDefaults 里。设置窗口在阶段 4，现在只有菜单栏的「暂停记录」会改它。
+/// 用户设置，存在 UserDefaults 里。设置窗口和菜单栏的「暂停记录」会改它。
 @MainActor
 final class Settings {
     private let defaults: UserDefaults
@@ -23,6 +23,8 @@ final class Settings {
         self.defaults = defaults
         defaults.register(defaults: [
             Key.retentionDays: Retention.threeMonths.rawValue,
+            Key.hotKeyCode: Shortcut.standard.keyCode,
+            Key.hotKeyModifiers: Shortcut.standard.modifiers,
             // 钥匙串访问、系统的「密码」应用：它们多半会打密码标记，这里再兜一层。
             Key.ignoredApps: ["com.apple.keychainaccess", "com.apple.Passwords"],
         ])
@@ -38,6 +40,15 @@ final class Settings {
         set { defaults.set(newValue.rawValue, forKey: Key.retentionDays) }
     }
 
+    /// 呼出面板的快捷键，默认 ⌃⌘V。
+    var shortcut: Shortcut {
+        get { Shortcut(keyCode: defaults.integer(forKey: Key.hotKeyCode), modifiers: defaults.integer(forKey: Key.hotKeyModifiers)) }
+        set {
+            defaults.set(newValue.keyCode, forKey: Key.hotKeyCode)
+            defaults.set(newValue.modifiers, forKey: Key.hotKeyModifiers)
+        }
+    }
+
     /// 这些应用在前台时复制的不记，按 bundle id。
     var ignoredApps: Set<String> {
         get { Set(defaults.stringArray(forKey: Key.ignoredApps) ?? []) }
@@ -48,5 +59,7 @@ final class Settings {
         static let paused = "paused"
         static let retentionDays = "retentionDays"
         static let ignoredApps = "ignoredApps"
+        static let hotKeyCode = "hotKeyCode"
+        static let hotKeyModifiers = "hotKeyModifiers"
     }
 }

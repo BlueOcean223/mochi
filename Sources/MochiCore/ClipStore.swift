@@ -281,6 +281,13 @@ public actor ClipStore {
         return try statement.step() ? Int(statement.int(0)) : 0
     }
 
+    /// `purge(before:)` 会删掉的条数：保留时长改短之前先告诉用户。
+    public func expiredCount(before date: Date) throws -> Int {
+        let statement = try db.prepare("SELECT count(*) FROM clips WHERE pinned_at IS NULL AND last_copied_at < ?1")
+            .bind(.double(date.timeIntervalSince1970))
+        return try statement.step() ? Int(statement.int(0)) : 0
+    }
+
     // MARK: - 改
 
     /// 从面板里粘贴、复制过的挪到最前，和再复制一遍一样；来源应用不变。

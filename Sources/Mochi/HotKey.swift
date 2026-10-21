@@ -49,3 +49,51 @@ final class HotKey {
         }, 1, &spec, nil, &handler)
     }
 }
+
+/// 呼出面板的那个全局快捷键：按设置里存的组合注册。录新快捷键时先停掉，不然按下现在这个组合会直接呼出面板；
+/// 换成新的组合时注册不上就还用旧的。
+@MainActor
+final class PanelHotKey {
+    private let settings: Settings
+    private let action: @MainActor () -> Void
+    private var hotKey: HotKey?
+    /// 跑调试脚本时不注册，免得和正在用的 Mochi 抢。
+    var isQuiet = false
+    /// 换了组合以后，菜单栏菜单里显示的快捷键跟着改。
+    var changed: ((Shortcut) -> Void)?
+
+    init(settings: Settings, action: @escaping @MainActor () -> Void) {
+        self.settings = settings
+        self.action = action
+    }
+
+    var shortcut: Shortcut { settings.shortcut }
+    var isRegistered: Bool { isQuiet || hotKey != nil }
+
+    @discardableResult
+    func register() -> Bool {
+        guard !isQuiet, hotKey == nil else { return isRegistered }
+        hotKey = HotKey(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers, action: action)
+        if hotKey == nil { log.error("hot key \(self.shortcut.description, privacy: .public) is taken") }
+        return hotKey != nil
+    }
+
+    func suspend() {
+        hotKey?.unregister()
+        hotKey = nil
+    }
+
+    func change(to new: Shortcut) -> Bool {
+        suspend()
+        if !isQuiet {
+            guard let key = HotKey(keyCode: new.keyCode, modifiers: new.modifiers, action: action) else {
+                register()
+                return false
+            }
+            hotKey = key
+        }
+        settings.shortcut = new
+        changed?(new)
+        return true
+    }
+}
