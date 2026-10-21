@@ -560,11 +560,12 @@ private struct ConfirmButtonLabel: View {
 
 // MARK: - 底栏
 
+/// 底栏：左右两个独立的胶囊，中间空着（照 Raycast）。左边是提示和次要操作，右边是粘贴和复制。
 private struct Footer: View {
     let model: PanelModel
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 8) {
             HStack(spacing: 14) {
                 if !model.canPaste {
                     HStack(spacing: 6) {
@@ -592,24 +593,28 @@ private struct Footer: View {
             }
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            Spacer(minLength: 8)
+            .padding(.horizontal, 12)
+            .footerPill()
+            Spacer(minLength: 0)
             if model.selectedClip != nil {
-                if model.canPaste {
-                    FooterButton(title: model.frontAppName.map { "粘贴到 \($0)" } ?? "粘贴", key: "↵", isPrimary: true) {
-                        model.perform?(.paste)
+                HStack(spacing: 2) {
+                    if model.canPaste {
+                        FooterButton(title: model.frontAppName.map { "粘贴到 \($0)" } ?? "粘贴", key: "↵", isPrimary: true) {
+                            model.perform?(.paste)
+                        }
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.12))
+                            .frame(width: 1, height: 14)
+                        FooterButton(title: "复制", key: "⌘↵") { model.perform?(.copy) }
+                    } else {
+                        FooterButton(title: "复制", key: "↵", isPrimary: true) { model.perform?(.copy) }
                     }
-                    FooterButton(title: "复制", key: "⌘↵") { model.perform?(.copy) }
-                } else {
-                    FooterButton(title: "复制", key: "↵", isPrimary: true) { model.perform?(.copy) }
                 }
+                .padding(.horizontal, 4)
+                .footerPill()
             }
         }
         .font(.system(size: 13))
-        .padding(.leading, 12)
-        .padding(.trailing, 6)
-        .frame(height: PanelMetrics.footerHeight)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
     }
 
     /// 当前这条能用的次要操作（decisions.md 第 12 条）。
@@ -621,6 +626,15 @@ private struct Footer: View {
         case .file: hints += [("Quick Look", "⌘Y"), ("在 Finder 中显示", "⇧⌘F")]
         }
         return hints
+    }
+}
+
+private extension View {
+    func footerPill() -> some View {
+        frame(height: PanelMetrics.footerHeight)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
     }
 }
 
