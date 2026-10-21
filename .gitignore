@@ -1,0 +1,6 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+# 文档和量测工具只在本地
+.agent/
