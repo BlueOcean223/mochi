@@ -111,6 +111,7 @@ private struct Header: View {
         .padding(.leading, 22)
         .padding(.trailing, 16)
         .frame(height: PanelMetrics.headerHeight)
+        .background(WindowDragArea())
     }
 }
 
@@ -574,34 +575,39 @@ private struct Footer: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 12) {
+            Group {
                 if !model.canPaste {
-                    HStack(spacing: 6) {
-                        Circle().fill(.orange).frame(width: 6, height: 6)
-                        Text("没有辅助功能权限").foregroundStyle(.orange)
-                    }
-                    Text("回车只复制")
-                    Button("去授权") { model.perform?(.openAccessibilitySettings) }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Color.accentColor)
-                } else if model.isPaused {
-                    HStack(spacing: 6) {
-                        Circle().fill(.orange).frame(width: 6, height: 6)
-                        Text("暂停记录中").foregroundStyle(.orange)
-                    }
-                    Text("新的复制不会出现在这里")
-                } else if let clip = model.selectedClip {
-                    ForEach(hints(for: clip), id: \.title) { hint in
+                    HStack(spacing: 12) {
                         HStack(spacing: 6) {
-                            Text(hint.title)
-                            Keycap(key: hint.key)
+                            Circle().fill(.orange).frame(width: 6, height: 6)
+                            Text("没有辅助功能权限").foregroundStyle(.orange)
+                        }
+                        Text("回车只复制")
+                        Button("去授权") { model.perform?(.openAccessibilitySettings) }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .padding(.horizontal, 10)
+                } else if model.isPaused {
+                    HStack(spacing: 12) {
+                        HStack(spacing: 6) {
+                            Circle().fill(.orange).frame(width: 6, height: 6)
+                            Text("暂停记录中").foregroundStyle(.orange)
+                        }
+                        Text("新的复制不会出现在这里")
+                    }
+                    .padding(.horizontal, 10)
+                } else if let clip = model.selectedClip {
+                    HStack(spacing: 2) {
+                        ForEach(actions(for: clip), id: \.title) { action in
+                            FooterButton(title: action.title, key: action.key) { model.perform?(action.command) }
                         }
                     }
+                    .padding(.horizontal, 3)
                 }
             }
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .padding(.horizontal, 10)
             .footerPill()
             Spacer(minLength: 0)
             if model.selectedClip != nil {
@@ -626,14 +632,14 @@ private struct Footer: View {
     }
 
     /// 当前这条能用的次要操作。
-    private func hints(for clip: Clip) -> [(title: String, key: String)] {
-        var hints = [(title: clip.isPinned ? "取消置顶" : "置顶", key: "⌘.")]
+    private func actions(for clip: Clip) -> [(title: String, key: String, command: PanelCommand)] {
+        var actions = [(title: clip.isPinned ? "取消置顶" : "置顶", key: "⌘.", command: PanelCommand.pin)]
         switch clip.kind {
-        case .text: hints.append(clip.isLink ? ("打开链接", "⌘O") : ("粘贴为纯文本", "⇧↵"))
-        case .image: hints.append(("Quick Look", "⌘Y"))
-        case .file: hints += [("Quick Look", "⌘Y"), ("在 Finder 中显示", "⇧⌘F")]
+        case .text: actions.append(clip.isLink ? ("打开链接", "⌘O", .openLink) : ("粘贴为纯文本", "⇧↵", .pastePlain))
+        case .image: actions.append(("Quick Look", "⌘Y", .quickLook))
+        case .file: actions += [("Quick Look", "⌘Y", .quickLook), ("在 Finder 中显示", "⇧⌘F", .revealInFinder)]
         }
-        return hints
+        return actions
     }
 }
 

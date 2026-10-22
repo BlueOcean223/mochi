@@ -20,6 +20,16 @@ public enum Images {
             .flatMap { downsample($0, maxPixel: maxPixel) }
     }
 
+    /// 转正以后的像素尺寸，只读文件头，不解码。
+    public static func pixelSize(_ url: URL) -> CGSize? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        let orientation = (properties[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init) ?? .up
+        return swapsSides(orientation) ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+    }
+
     /// 写成 PNG。先写到临时文件再换过去，读的一方不会读到半个文件。
     @discardableResult
     public static func writePNG(_ image: CGImage, to url: URL) -> Bool {
@@ -43,8 +53,7 @@ public enum Images {
         guard let image = CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary) else { return nil }
 
         let orientation = (properties[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init) ?? .up
-        let swapsSides = [.left, .leftMirrored, .right, .rightMirrored].contains(orientation)
-        let upright = swapsSides ? CGSize(width: image.height, height: image.width) : CGSize(width: image.width, height: image.height)
+        let upright = swapsSides(orientation) ? CGSize(width: image.height, height: image.width) : CGSize(width: image.width, height: image.height)
         let scale = min(1, CGFloat(maxPixel) / max(upright.width, upright.height))
         let outputWidth = max(1, Int((upright.width * scale).rounded()))
         let outputHeight = max(1, Int((upright.height * scale).rounded()))
@@ -59,6 +68,11 @@ public enum Images {
         context.concatenate(transform(for: orientation, width: CGFloat(image.width), height: CGFloat(image.height)))
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return context.makeImage()
+    }
+
+    /// 转正时宽高对调的四种方向。
+    private static func swapsSides(_ orientation: CGImagePropertyOrientation) -> Bool {
+        [.left, .leftMirrored, .right, .rightMirrored].contains(orientation)
     }
 
     /// 把存的图（宽 `width`、高 `height`）画正的变换，用的是 Core Graphics 的坐标（原点在左下）。

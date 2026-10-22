@@ -9,11 +9,14 @@ final class StatusMenu: NSObject {
     private let openItem = NSMenuItem(title: "打开剪切板历史", action: #selector(open), keyEquivalent: "")
     private let openPanel: () -> Void
     private let openSettings: () -> Void
+    private let resetPanelPosition: () -> Void
 
-    init(settings: Settings, openPanel: @escaping () -> Void, openSettings: @escaping () -> Void) {
+    init(settings: Settings, openPanel: @escaping () -> Void, openSettings: @escaping () -> Void,
+         resetPanelPosition: @escaping () -> Void) {
         self.settings = settings
         self.openPanel = openPanel
         self.openSettings = openSettings
+        self.resetPanelPosition = resetPanelPosition
         super.init()
         let image = NSImage(systemSymbolName: "list.clipboard", accessibilityDescription: "Mochi")
         image?.isTemplate = true
@@ -26,6 +29,9 @@ final class StatusMenu: NSObject {
         showShortcut(settings.shortcut)
         pauseItem.target = self
         menu.addItem(pauseItem)
+        let resetItem = NSMenuItem(title: "窗口位置复原", action: #selector(resetPosition), keyEquivalent: "")
+        resetItem.target = self
+        menu.addItem(resetItem)
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
@@ -48,6 +54,11 @@ final class StatusMenu: NSObject {
 
     @objc private func showSettings() {
         openSettings()
+    }
+
+    /// 面板拖走以后回到默认位置（屏幕中间偏上），照 Raycast 的「Reset Raycast Window Position」。
+    @objc private func resetPosition() {
+        resetPanelPosition()
     }
 
     @objc private func togglePause() {

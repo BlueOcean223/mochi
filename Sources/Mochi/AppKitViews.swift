@@ -112,8 +112,8 @@ struct ImageLayer: NSViewRepresentable {
     let image: CGImage
     let cornerRadius: CGFloat
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+    func makeNSView(context: Context) -> ImageLayerView {
+        let view = ImageLayerView()
         view.wantsLayer = true
         view.layer?.contentsGravity = .resize
         view.layer?.minificationFilter = .trilinear
@@ -123,7 +123,25 @@ struct ImageLayer: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: NSView, context: Context) {
+    func updateNSView(_ view: ImageLayerView, context: Context) {
         view.layer?.contents = image
+    }
+}
+
+/// 有自己的类名，Quick Look 开关时按它找预览图在屏幕上的位置。
+final class ImageLayerView: NSView {}
+
+/// 按住拖动整个窗口。放在搜索栏的背景上：搜索框、按钮照常接点击，空白处能拖。
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        DragView()
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
     }
 }

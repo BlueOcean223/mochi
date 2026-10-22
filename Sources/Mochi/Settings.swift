@@ -62,6 +62,24 @@ final class Settings {
         set { defaults.set(newValue.sorted(), forKey: Key.ignoredApps) }
     }
 
+    /// 面板拖过以后的位置，每块屏幕一份：面板左上角离这块屏幕可用区域左上角多远（向右、向下为正）。
+    /// 键是显示器的 UUID。没拖过的屏幕没有，面板放在默认位置。
+    func panelOffset(onDisplay display: String) -> CGPoint? {
+        guard let values = (defaults.dictionary(forKey: Key.panelOffsets) as? [String: [Double]])?[display], values.count == 2 else { return nil }
+        return CGPoint(x: values[0], y: values[1])
+    }
+
+    func setPanelOffset(_ offset: CGPoint, onDisplay display: String) {
+        var offsets = defaults.dictionary(forKey: Key.panelOffsets) ?? [:]
+        offsets[display] = [Double(offset.x), Double(offset.y)]
+        defaults.set(offsets, forKey: Key.panelOffsets)
+    }
+
+    /// 菜单栏的「窗口位置复原」：所有屏幕都回到默认位置。
+    func resetPanelOffsets() {
+        defaults.removeObject(forKey: Key.panelOffsets)
+    }
+
     private enum Key {
         static let paused = "paused"
         static let retentionHours = "retentionHours"
@@ -69,5 +87,6 @@ final class Settings {
         static let ignoredApps = "ignoredApps"
         static let hotKeyCode = "hotKeyCode"
         static let hotKeyModifiers = "hotKeyModifiers"
+        static let panelOffsets = "panelOffsets"
     }
 }

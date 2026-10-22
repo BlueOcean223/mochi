@@ -33,7 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 跑调试脚本时不放菜单栏图标，不然菜单栏上会多出一个 Mochi。
         if !isDriving {
             statusMenu = StatusMenu(settings: settings, openPanel: { [weak self] in self?.panel?.show() },
-                                    openSettings: { [weak self] in self?.settingsWindow?.show() })
+                                    openSettings: { [weak self] in self?.settingsWindow?.show() },
+                                    resetPanelPosition: { [weak self] in self?.panel?.resetPosition() })
         }
         let directory = dataDirectory()
         let store: ClipStore

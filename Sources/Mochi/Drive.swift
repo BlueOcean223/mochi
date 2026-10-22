@@ -31,6 +31,11 @@ import UniformTypeIdentifiers
 ///     backdrop 60             在面板后面垫一块灰（0–255），看毛玻璃背后是深色窗口时的样子；backdrop 不带参数是拿掉
 ///     tint 0.64               浅色外观下毛玻璃上那层白的浓度（试样子用）
 ///     shot-backdrop 名字      把面板连同 backdrop 一起截（ScreenCaptureKit，只合成这两个窗口），毛玻璃透出背后那块灰
+///     shot-all 名字           把 Mochi 自己在屏幕上的窗口合成一张（看 Quick Look 开关的过渡）
+///     slow 10                 Quick Look 的动画放慢 10 倍，好逐帧截图；slow 1 恢复
+///     hit 300 30              面板里这一点（左上角原点）上接鼠标的视图
+///     move 100 50             把面板往右 100、往下 50 挪（和用户拖一样记下位置）
+///     where                   打印面板左上角离屏幕可用区域左上角多远
 ///     trusted                 当作有辅助功能权限（底栏、设置里显示有权限的样子；照样不发 ⌘V）
 ///     settings                打开设置窗口（也压在桌面下面）
 ///     settings-close
@@ -125,6 +130,15 @@ final class Drive {
         case "shot-quicklook": await capture(window: panel.quickLookWindowNumber, name: argument)
         case "trusted": paster.pretendsTrusted = true
         case "backdrop": setBackdrop(Int(argument))
+        case "slow": QuickLook.slowdown = Double(argument) ?? 1
+        case "hit": printHit(argument)
+        case "move":
+            let parts = argument.split(separator: " ").compactMap { Double($0) }
+            if parts.count == 2 { panel.moveBy(dx: parts[0], dy: -parts[1]) }
+        case "where":
+            let frame = panel.frame, visible = NSScreen.main?.visibleFrame ?? .zero
+            print("drive: 面板左上角离屏幕可用区域左上角 x=\(Int(frame.minX - visible.minX)) y=\(Int(visible.maxY - frame.maxY))")
+        case "shot-all": await captureAll(name: argument)
         case "tint": panel.lightTint = CGFloat(Double(argument) ?? 0.64)
         case "shot-backdrop": await captureWithBackdrop(name: argument)
         case "settings": settingsWindow.show()
@@ -257,6 +271,51 @@ final class Drive {
                                                                     UTType.png.identifier as CFString, 1, nil) else { return }
             CGImageDestinationAddImage(destination, image, nil)
             print(CGImageDestinationFinalize(destination) ? "drive: shot \(name).png" : "drive: 写不出 \(name).png")
+        } catch {
+            print("drive: ScreenCaptureKit 失败：\(error)")
+        }
+    }
+
+    /// 面板里这一点（左上角原点）上接鼠标的是哪个视图，往上数几层。
+    private func printHit(_ argument: String) {
+        let parts = argument.split(separator: " ").compactMap { Double($0) }
+        guard parts.count == 2, let view = panel.contentView else { return }
+        let point = NSPoint(x: parts[0], y: view.bounds.height - parts[1])
+        var chain: [String] = []
+        var hit = view.hitTest(point)
+        while let current = hit, chain.count < 4 {
+            chain.append(String(describing: type(of: current)))
+            hit = current.superview
+        }
+        print("drive: hit \(argument) → \(chain.joined(separator: " ← "))")
+    }
+
+    /// 把 Mochi 自己在屏幕上的窗口（面板、Quick Look、Quick Look 开关时飞的那张图）合成一张，范围是它们合起来的那块。
+    private func captureAll(name: String) async {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            let pid = ProcessInfo.processInfo.processIdentifier
+            let windows = content.windows.filter { $0.owningApplication?.processID == pid && $0.frame.width > 1 }
+            guard let first = windows.first,
+                  let display = content.displays.first(where: { $0.frame.intersects(first.frame) }) ?? content.displays.first else {
+                print("drive: 没有窗口")
+                return
+            }
+            // SCWindow.frame 已经是显示器坐标（左上角原点）。
+            let area = windows.map(\.frame).reduce(first.frame) { $0.union($1) }.insetBy(dx: -20, dy: -20)
+                .intersection(display.frame)
+            let config = SCStreamConfiguration()
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            config.sourceRect = area.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
+            config.width = Int(area.width * scale)
+            config.height = Int(area.height * scale)
+            config.showsCursor = false
+            let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: display, including: windows),
+                                                                   configuration: config)
+            guard let destination = CGImageDestinationCreateWithURL(shots.appending(path: "\(name).png") as CFURL,
+                                                                    UTType.png.identifier as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(destination, image, nil)
+            print(CGImageDestinationFinalize(destination) ? "drive: shot \(name).png（\(windows.count) 个窗口）" : "drive: 写不出 \(name).png")
         } catch {
             print("drive: ScreenCaptureKit 失败：\(error)")
         }

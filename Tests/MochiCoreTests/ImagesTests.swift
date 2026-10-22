@@ -70,6 +70,14 @@ final class ImagesTests {
 
     @Test func missingFileGivesNil() {
         #expect(Images.downsample(directory.appending(path: "nope.png"), maxPixel: 96) == nil)
+        #expect(Images.pixelSize(directory.appending(path: "nope.png")) == nil)
+    }
+
+    @Test func pixelSizeIsUpright() throws {
+        let up = try write(quadrants(width: 60, height: 40), orientation: .up, type: .png)
+        #expect(Images.pixelSize(up) == CGSize(width: 60, height: 40))
+        let right = try write(quadrants(width: 60, height: 40), orientation: .right, type: .tiff)
+        #expect(Images.pixelSize(right) == CGSize(width: 40, height: 60))
     }
 
     // MARK: -

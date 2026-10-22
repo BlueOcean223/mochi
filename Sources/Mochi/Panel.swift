@@ -23,6 +23,26 @@ final class ClipPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    /// 搜索框空着时，按在它上面拖的是整个面板：它占了搜索栏的大半，空着时点它也没有用处（Tinycast 也这么做）。
+    /// 有字、正在用输入法组字时照常点、选字。搜索栏别的空白处由 WindowDragArea 拖。
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, let field = textField(at: event.locationInWindow), field.stringValue.isEmpty,
+           !((field.currentEditor() as? NSTextView)?.hasMarkedText() ?? false) {
+            performDrag(with: event)
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    private func textField(at point: NSPoint) -> NSTextField? {
+        var view = contentView?.hitTest(point)
+        while let current = view {
+            if let field = current as? NSTextField { return field }
+            view = current.superview
+        }
+        return nil
+    }
+
     /// 焦点一直留在搜索框：点列表行、按钮时 SwiftUI 的视图会要第一响应者，不给。
     @discardableResult
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
@@ -43,6 +63,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     private let hud: HUD
     private let quickLook = QuickLook()
     private var wantsVisible = false
+    /// 呼出时自己摆的位置。windowDidMove 里和它一样就不是用户拖的。
+    private var placedOrigin: NSPoint?
     private var keyMonitor: Any?
     var openSettings: (() -> Void)?
 
@@ -76,6 +98,12 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     var windowNumber: Int { panel.windowNumber }
     var frame: NSRect { panel.frame }
+    #if DEBUG
+    /// 调试脚本模拟用户拖面板：和拖动一样会走 windowDidMove。
+    func moveBy(dx: CGFloat, dy: CGFloat) {
+        panel.setFrameOrigin(NSPoint(x: panel.frame.minX + dx, y: panel.frame.minY + dy))
+    }
+    #endif
     var contentView: NSView? { panel.contentView }
     private let tint = LightTintView()
 
@@ -118,7 +146,9 @@ final class PanelController: NSObject, NSWindowDelegate {
             // 先把第一页读好再显示，免得先露出上次的列表再跳。
             await model.prepare(isPaused: settings.isPaused, frontAppName: frontApp?.localizedName, canPaste: paster.canPaste)
             guard wantsVisible else { return }
-            panel.setFrameOrigin(origin())
+            let origin = origin()
+            placedOrigin = origin
+            panel.setFrameOrigin(origin)
             if isQuiet {
                 panel.orderFrontRegardless()
             } else {
@@ -150,7 +180,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         wantsVisible = false
         model.isTypeMenuOpen = false
         model.cancelClear()
-        quickLook.close()
+        quickLook.close(animated: false)
         panel.orderOut(nil)
     }
 
@@ -159,13 +189,32 @@ final class PanelController: NSObject, NSWindowDelegate {
         if !isQuiet { hide() }
     }
 
-    /// 鼠标所在屏幕，水平居中，竖直方向偏上。
+    /// 鼠标所在屏幕。在这块屏幕上拖过就放回拖到的位置（屏幕变小了就挪进来），没拖过就水平居中、竖直方向偏上。
     private func origin() -> NSPoint {
         let size = PanelMetrics.size
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         let frame = screen.visibleFrame
-        return NSPoint(x: (frame.midX - size.width / 2).rounded(), y: (frame.minY + (frame.height - size.height) * 0.62).rounded())
+        guard let display = screen.displayUUID, let offset = settings.panelOffset(onDisplay: display) else {
+            return NSPoint(x: (frame.midX - size.width / 2).rounded(), y: (frame.minY + (frame.height - size.height) * 0.62).rounded())
+        }
+        let x = min(max(frame.minX + offset.x, frame.minX), frame.maxX - size.width)
+        let y = min(max(frame.maxY - offset.y - size.height, frame.minY), frame.maxY - size.height)
+        return NSPoint(x: x.rounded(), y: y.rounded())
+    }
+
+    /// 用户拖了面板（搜索栏的空白处），记下它现在所在屏幕上的位置。
+    func windowDidMove(_ notification: Notification) {
+        guard panel.isVisible, panel.frame.origin != placedOrigin,
+              let screen = panel.screen, let display = screen.displayUUID else { return }
+        let frame = screen.visibleFrame
+        settings.setPanelOffset(CGPoint(x: panel.frame.minX - frame.minX, y: frame.maxY - panel.frame.maxY), onDisplay: display)
+        placedOrigin = nil
+    }
+
+    /// 菜单栏的「窗口位置复原」。
+    func resetPosition() {
+        settings.resetPanelOffsets()
     }
 
     private func focusSearchField() {
@@ -196,7 +245,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             return true
         }
         if quickLook.isVisible, command == .escape {
-            quickLook.close()
+            quickLook.close(to: quickLookSource())
             return true
         }
         if model.isTypeMenuOpen {
@@ -312,16 +361,40 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// 图片条目用存下的尺寸；只有一个文件、而且面板里显示的是这张图时读文件的尺寸。
     private func imageSize(_ clip: Clip?) -> CGSize? {
-        guard let clip, clip.kind == .image, let width = clip.imageWidth, let height = clip.imageHeight else { return nil }
-        return CGSize(width: width, height: height)
+        guard let clip else { return nil }
+        switch clip.kind {
+        case .image:
+            guard let width = clip.imageWidth, let height = clip.imageHeight else { return nil }
+            return CGSize(width: width, height: height)
+        case .file:
+            guard clip.fileURLs.count == 1, let url = clip.fileURLs.first, previewImage(of: clip) != nil else { return nil }
+            return Images.pixelSize(url)
+        case .text:
+            return nil
+        }
+    }
+
+    private func previewImage(of clip: Clip) -> CGImage? {
+        guard let preview = model.preview, preview.clipID == clip.id, case .image(let image) = preview.content else { return nil }
+        return image
+    }
+
+    /// 面板里这一条的预览图在屏幕上的位置，Quick Look 从这里放大、缩回这里。预览还没换到这一条时没有。
+    private func quickLookSource() -> QuickLook.Source? {
+        guard let clip = model.selectedClip, let image = previewImage(of: clip),
+              let view = panel.contentView?.firstSubview(of: ImageLayerView.self), let window = view.window else { return nil }
+        let frame = window.convertToScreen(view.convert(view.bounds, to: nil))
+        guard frame.width > 1, frame.height > 1 else { return nil }
+        return QuickLook.Source(frame: frame, image: image, cornerRadius: view.layer?.cornerRadius ?? 0)
     }
 
     private func toggleQuickLook() {
         if quickLook.isVisible {
-            quickLook.close()
+            quickLook.close(to: quickLookSource())
         } else if let url = quickLookURL(model.selectedClip) {
-            quickLook.show(url, imageSize: imageSize(model.selectedClip), over: panel)
+            quickLook.show(url, imageSize: imageSize(model.selectedClip), over: panel, from: quickLookSource())
             if isQuiet { print("panel: quick look \(url.lastPathComponent) visible=\(quickLook.isVisible) window=\(quickLook.windowNumber)") }
         }
     }
@@ -398,6 +471,15 @@ private extension NSView {
             if let match = subview as? T ?? subview.firstSubview(of: type) { return match }
         }
         return nil
+    }
+}
+
+private extension NSScreen {
+    /// 显示器的 UUID，换接口、重新插拔都不变（NSScreenNumber 会变）。
+    var displayUUID: String? {
+        guard let number = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+              let uuid = CGDisplayCreateUUIDFromDisplayID(number)?.takeRetainedValue() else { return nil }
+        return CFUUIDCreateString(nil, uuid) as String
     }
 }
 
