@@ -126,7 +126,7 @@ extension PanelModel {
 
     /// 标题行：开头 40 个字，换行、连续的空白并成一个空格。
     private static func menuTitle(_ clip: Clip) -> String {
-        let words = clip.title.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let words = (clip.customTitle ?? clip.title).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return words.count > 40 ? String(words.prefix(40)) + "…" : words
     }
 
@@ -152,6 +152,10 @@ extension PanelModel {
         if clip.kind != .text {
             manage.append(PanelAction(title: "Quick Look", icon: .symbol("eye"), shortcut: "⌘Y", command: .quickLook))
         }
+        if clip.kind == .text {
+            manage.append(PanelAction(title: "编辑", icon: .symbol("pencil"), shortcut: "⌘E", command: .edit))
+        }
+        manage.append(PanelAction(title: "改名…", icon: .symbol("character.cursor.ibeam"), shortcut: "⇧⌘E", command: .rename))
         manage.append(PanelAction(title: clip.isPinned ? "取消置顶" : "置顶", icon: .symbol(clip.isPinned ? "pin.slash" : "pin"),
                                   shortcut: "⌘.", command: .pin))
         if clip.isPinned {

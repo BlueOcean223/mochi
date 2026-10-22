@@ -67,6 +67,16 @@ struct PanelView: View {
             }
         }
         .overlay {
+            if let edit = model.editing {
+                EditView(model: model, edit: edit)
+            }
+        }
+        .overlay {
+            if let request = model.renaming {
+                RenameSheet(model: model, request: request)
+            }
+        }
+        .overlay {
             RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
         }

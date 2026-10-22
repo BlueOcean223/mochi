@@ -261,6 +261,13 @@ final class PanelController: NSObject, NSWindowDelegate {
         // 输入法正在拼字时方向键、回车是给输入法的。
         if let editor = panel.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
         let command = PanelCommand(event)
+        // 编辑框、改名框开着时只认它们的几个键，别的（打字、↵ 换行、方向键）给输入区。
+        if model.editing != nil || model.renaming != nil {
+            guard let command, [.escape, .paste, .copy, .pasteKeepOpen].contains(command) else { return false }
+            if model.editing != nil, command == .paste { return false }
+            perform(command)
+            return true
+        }
         if model.clearConfirmation != nil {
             // 确认框开着时只认回车（清空）和 Esc（取消），别的键都吞掉。
             if command == .paste {
@@ -313,6 +320,24 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func perform(_ command: PanelCommand) {
+        if model.editing != nil {
+            // ⌘↵ 保存，⌥↵ 保存并复制，Esc 不保存。
+            switch command {
+            case .escape: finishEditing { $0.editing = nil }
+            case .copy: finishEditing { await $0.saveEdit() }
+            case .pasteKeepOpen: finishEditing { await $0.saveEdit() } then: { self.paste(.copy) }
+            default: break
+            }
+            return
+        }
+        if model.renaming != nil {
+            switch command {
+            case .escape: finishEditing { $0.renaming = nil }
+            case .paste: finishEditing { await $0.saveRename() }
+            default: break
+            }
+            return
+        }
         // 文件的 ⌘O 是进「用其他应用打开」子菜单。
         if command == .open, model.selectedClip?.kind == .file {
             perform(.submenu(.openWith))
@@ -353,6 +378,8 @@ final class PanelController: NSObject, NSWindowDelegate {
                 hud.show(count == 0 ? "最近 \(span)没有要删的，置顶的不删" : "删掉了最近 \(span)的 \(count) 条")
             }
         case .drag(let id): startDrag(id)
+        case .edit: Task { await model.startEdit() }
+        case .rename: model.startRename()
         case .number(let n):
             guard model.clips.indices.contains(n - 1) else { return }
             model.select(model.clips[n - 1].id)
@@ -472,6 +499,15 @@ final class PanelController: NSObject, NSWindowDelegate {
         model.select(id)
         openActionMenu()
         return true
+    }
+
+    /// 编辑框、改名框做完（保存或者取消）：键盘焦点回到主搜索框，再做 `then`。
+    private func finishEditing(_ change: @escaping (PanelModel) async -> Void, then: (() -> Void)? = nil) {
+        Task {
+            await change(model)
+            focusSearchField()
+            then?()
+        }
     }
 
     /// 关掉操作面板，键盘焦点回到主搜索框。
@@ -676,6 +712,8 @@ extension PanelCommand {
             }
         case kVK_ANSI_K:
             command = modifiers == .command ? .actions : nil
+        case kVK_ANSI_E:
+            command = modifiers == .command ? .edit : modifiers == [.command, .shift] ? .rename : nil
         case kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9, kVK_ANSI_0:
             let digits = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9, kVK_ANSI_0]
             command = modifiers == .command ? digits.firstIndex(of: Int(event.keyCode)).map { .number($0 + 1) } : nil

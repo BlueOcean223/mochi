@@ -23,6 +23,8 @@ public struct Clip: Sendable, Identifiable, Equatable {
     public let isPinned: Bool
     public let firstCopiedAt: Date
     public let lastCopiedAt: Date
+    /// 用户起的名字（改名），没起是 nil。
+    public let customTitle: String?
 }
 
 extension Clip {
@@ -63,7 +65,16 @@ public actor ClipStore {
     private static func migrate(_ db: Database) throws {
         let version = try db.prepare("PRAGMA user_version")
         let current = try version.step() ? version.int(0) : 0
-        guard current < 1 else { return }
+        if current < 1 {
+            try createTables(db)
+        }
+        if current < 2 {
+            // 改名：用户起的名字，列表里代替标题显示，搜索也搜它。
+            try db.execute("ALTER TABLE clips ADD COLUMN custom_title TEXT; PRAGMA user_version = 2;")
+        }
+    }
+
+    private static func createTables(_ db: Database) throws {
         try db.execute("""
             CREATE TABLE clips (
               id INTEGER PRIMARY KEY,
@@ -251,9 +262,10 @@ public actor ClipStore {
         let pattern = query.isEmpty ? "" : "%" + escapeLike(query.lowercased()) + "%"
         let statement = try db.prepare("""
             SELECT id, kind, title, file_paths, image_file, image_width, image_height, byte_size, char_count,
-                   source_bundle_id, source_name, pinned_at, first_copied_at, last_copied_at
+                   source_bundle_id, source_name, pinned_at, first_copied_at, last_copied_at, custom_title
             FROM clips
-            WHERE (?1 IS NULL OR kind = ?1) AND (?2 = '' OR search_text LIKE ?2 ESCAPE '\\')
+            WHERE (?1 IS NULL OR kind = ?1)
+              AND (?2 = '' OR search_text LIKE ?2 ESCAPE '\\' OR lower(custom_title) LIKE ?2 ESCAPE '\\')
             ORDER BY pinned_at IS NULL, pinned_at DESC, last_copied_at DESC
             LIMIT ?3 OFFSET ?4
             """)
@@ -276,7 +288,8 @@ public actor ClipStore {
                 sourceName: statement.text(10),
                 isPinned: !statement.isNull(11),
                 firstCopiedAt: Date(timeIntervalSince1970: statement.double(12)),
-                lastCopiedAt: Date(timeIntervalSince1970: statement.double(13))))
+                lastCopiedAt: Date(timeIntervalSince1970: statement.double(13)),
+                customTitle: statement.text(14)))
         }
         return clips
     }
@@ -333,6 +346,33 @@ public actor ClipStore {
         try db.prepare("UPDATE clips SET last_copied_at = ?1 WHERE id = ?2")
             .bind(.double(date.timeIntervalSince1970), .int(id))
             .run()
+    }
+
+    /// 起名字；nil 或者全是空白就去掉名字，恢复原来的标题。
+    public func rename(id: Int64, to title: String?) throws {
+        let title = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        try db.prepare("UPDATE clips SET custom_title = ?1 WHERE id = ?2")
+            .bind(title.isEmpty ? .null : .text(title), .int(id))
+            .run()
+    }
+
+    /// 改文本条目的内容。格式（RTF、HTML）和改过的文字对不上了，删掉，只留纯文本；标题、搜索用的字、字数跟着改。
+    /// 改完和另一条内容一样时删掉那一条，这条的置顶、名字、时间留着。
+    public func editText(id: Int64, to text: String) throws {
+        let hash = Capture(kind: .text, text: text, date: .now).contentHash
+        try db.transaction {
+            if let other = try existingID(hash: hash), other != id {
+                try db.prepare("DELETE FROM clips WHERE id = ?1").bind(.int(other)).run()
+            }
+            try db.prepare("""
+                UPDATE clips SET hash = ?1, title = ?2, search_text = ?3, text = ?4, byte_size = ?5, char_count = ?6
+                WHERE id = ?7 AND kind = ?8
+                """)
+                .bind(.text(hash), .text(String(text.prefix(Self.titleLength))), .text(String(text.prefix(Self.searchLength)).lowercased()),
+                      .text(text), .int(Int64(text.utf8.count)), .int(Int64(text.count)), .int(id), .int(Int64(ClipKind.text.rawValue)))
+                .run()
+            try db.prepare("DELETE FROM formats WHERE clip_id = ?1").bind(.int(id)).run()
+        }
     }
 
     public func setPinned(_ pinned: Bool, id: Int64) throws {

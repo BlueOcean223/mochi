@@ -3,8 +3,9 @@ import MochiCore
 import UniformTypeIdentifiers
 
 extension Clip {
-    /// 列表里显示的一行：文本取第一个不是空白的行。
+    /// 列表里显示的一行：起了名字就是名字；文本取第一个不是空白的行。
     var displayTitle: String {
+        if let customTitle { return customTitle }
         guard kind == .text else { return title }
         let line = title.split(whereSeparator: \.isNewline).first { !$0.allSatisfy(\.isWhitespace) }
         guard let line else { return "（空白）" }

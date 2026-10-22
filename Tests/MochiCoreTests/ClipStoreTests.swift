@@ -277,3 +277,48 @@ private func tiff(width: Int, height: Int) throws -> Data {
     guard case .inserted(let id) = try await t.store.record(snapshot) else { Issue.record("应该是新增"); return }
     #expect(try await t.store.formatTypes(of: id) == [T.html, T.rtf])
 }
+
+@Test func renameShowsAndSearchesTheName() async throws {
+    let t = try TempStore()
+    guard case .inserted(let id) = try await t.store.record(text("ssh deploy@10.0.3.12")) else { Issue.record("应该是新增"); return }
+    try await t.store.rename(id: id, to: "  生产服务器  ")
+    #expect(try await t.store.list().first?.customTitle == "生产服务器")
+    #expect(try await t.store.list(matching: "生产").map(\.id) == [id])
+    #expect(try await t.store.list(matching: "deploy").map(\.id) == [id])
+    try await t.store.rename(id: id, to: " ")
+    #expect(try await t.store.list().first?.customTitle == nil)
+}
+
+@Test func editTextDropsFormatsAndMergesDuplicates() async throws {
+    let t = try TempStore()
+    let rich = PasteboardSnapshot(items: [.init(types: [T.plainText, T.html],
+                                                data: [T.plainText: Data("draft".utf8), T.html: Data("<b>draft</b>".utf8)])])
+    guard case .inserted(let id) = try await t.store.record(rich) else { Issue.record("应该是新增"); return }
+    try await t.store.record(text("final"))
+    try await t.store.setPinned(true, id: id)
+    try await t.store.editText(id: id, to: "final")
+    let clips = try await t.store.list()
+    #expect(clips.count == 1)
+    #expect(clips[0].id == id)
+    #expect(clips[0].isPinned)
+    #expect(clips[0].title == "final")
+    #expect(clips[0].characterCount == 5)
+    #expect(try await t.store.text(of: id) == "final")
+    #expect(try await t.store.formats(of: id).isEmpty)
+    #expect(try await t.store.list(matching: "fin").map(\.id) == [id])
+    // 改过的内容再复制一遍，合并到这一条
+    #expect(try await t.store.record(text("final")) == .bumped(id))
+}
+
+@Test func migratesVersionOneDatabase() async throws {
+    let t = try TempStore()
+    try await t.store.record(text("old row"))
+    let db = try Database(path: t.directory.appending(path: "mochi.sqlite").path)
+    try db.execute("ALTER TABLE clips DROP COLUMN custom_title; PRAGMA user_version = 1;")
+    let reopened = try ClipStore(directory: t.directory)
+    let clips = try await reopened.list()
+    #expect(clips.map(\.title) == ["old row"])
+    #expect(clips[0].customTitle == nil)
+    try await reopened.rename(id: clips[0].id, to: "named")
+    #expect(try await reopened.list()[0].customTitle == "named")
+}

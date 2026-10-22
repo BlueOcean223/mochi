@@ -67,6 +67,10 @@ enum PanelCommand: Equatable {
     case movePinnedUp, movePinnedDown
     /// ⌘K：操作面板开关。
     case actions
+    /// ⌘E：改文本条目的内容。
+    case edit
+    /// ⇧⌘E：给条目起名字。
+    case rename
     /// 按住一行拖出去（拖到别的应用）。
     case drag(Int64)
     /// ⌘1…⌘9、⌘0：对列表第 1–10 条做回车做的事；操作面板开着时执行面板里第 N 项。
@@ -111,6 +115,20 @@ struct EnterKeys {
         default: command
         }
     }
+}
+
+/// 改名时的小框：这条和输入框里的字。
+struct RenameRequest {
+    let clip: Clip
+    var title: String
+}
+
+/// 编辑文本时整个面板换成编辑框。
+struct TextEdit {
+    let clip: Clip
+    var text: String
+    /// 原来存了 RTF、HTML，保存后会去掉。
+    let dropsFormats: Bool
 }
 
 /// 清空前的确认。
@@ -192,6 +210,8 @@ struct EnterKeys {
     private(set) var clearConfirmation: ClearRequest?
     /// ⌘K 操作面板，开着时不是 nil。
     var actionMenu: ActionMenu?
+    var renaming: RenameRequest?
+    var editing: TextEdit?
     var isTypeMenuOpen = false
     var typeMenuIndex = 0
     /// 每次加一，列表就滚回顶上（呼出、换搜索词时）。
@@ -271,6 +291,8 @@ struct EnterKeys {
         self.canPaste = canPaste
         isTypeMenuOpen = false
         actionMenu = nil
+        renaming = nil
+        editing = nil
         clearConfirmation = nil
         query = ""
         kind = nil
@@ -451,6 +473,45 @@ struct EnterKeys {
         }
         await reload(keepSelection: true)
         scrollToSelection += 1
+    }
+
+    // MARK: - 改名、编辑
+
+    func startRename() {
+        guard let clip = selectedClip else { return }
+        renaming = RenameRequest(clip: clip, title: clip.customTitle ?? "")
+    }
+
+    func saveRename() async {
+        guard let request = renaming else { return }
+        renaming = nil
+        do {
+            try await store.rename(id: request.clip.id, to: request.title)
+        } catch {
+            log.error("rename failed: \(error, privacy: .public)")
+        }
+        await reload(keepSelection: true)
+    }
+
+    func startEdit() async {
+        guard let clip = selectedClip, clip.kind == .text, let text = try? await store.text(of: clip.id) else { return }
+        let formats = await formatTypes(of: clip)
+        guard clip.id == selectedID else { return }
+        editing = TextEdit(clip: clip, text: text, dropsFormats: !formats.isEmpty)
+    }
+
+    /// 保存编辑，回到列表，还选着这一条。
+    func saveEdit() async {
+        guard let edit = editing else { return }
+        editing = nil
+        do {
+            try await store.editText(id: edit.clip.id, to: edit.text)
+        } catch {
+            log.error("edit failed: \(error, privacy: .public)")
+        }
+        await reload(keepSelection: true)
+        // 还是这一条，select 不会重读预览，内容改了要重读。
+        loadPreview()
     }
 
     /// 文本条目除了纯文本还存了哪些格式。

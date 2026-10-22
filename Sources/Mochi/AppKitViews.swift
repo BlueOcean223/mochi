@@ -152,3 +152,61 @@ struct WindowDragArea: NSViewRepresentable {
         }
     }
 }
+
+/// 编辑文本用的输入区：可以改的 NSTextView，只收纯文本。建出来就拿键盘焦点，光标放在最后。
+/// 和 TextPreview 一样，销毁前先清空文字：macOS 26 上 TextKit 2 的 NSTextView 销毁后排版对象和全文留在内存里。
+struct TextEditorView: NSViewRepresentable {
+    @Binding var text: String
+    let monospaced: Bool
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        if let textView = scrollView.documentView as? NSTextView {
+            textView.isRichText = false
+            textView.allowsUndo = true
+            textView.drawsBackground = false
+            textView.isAutomaticQuoteSubstitutionEnabled = false
+            textView.isAutomaticDashSubstitutionEnabled = false
+            textView.isAutomaticTextReplacementEnabled = false
+            textView.textContainerInset = NSSize(width: 13, height: 12)
+            textView.font = monospaced ? .monospacedSystemFont(ofSize: 13, weight: .regular) : .systemFont(ofSize: 13)
+            textView.string = text
+            textView.delegate = context.coordinator
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(textView)
+                textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+                textView.scrollToEndOfDocument(nil)
+            }
+        }
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.text = $text
+    }
+
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        (scrollView.documentView as? NSTextView)?.string = ""
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView, !textView.hasMarkedText() else { return }
+            text.wrappedValue = textView.string
+        }
+    }
+}
