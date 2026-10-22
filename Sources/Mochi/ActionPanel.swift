@@ -126,23 +126,25 @@ private struct ActionRow: View {
     }
 }
 
-/// 打开时照 Raycast：从 0.97 倍、0.6 的透明度长出来（右下角不动），0.25 秒，最后略微冲过头；关时 0.15 秒淡出。
+/// 打开时从下面 6 点、0.6 的透明度升上来，0.25 秒，曲线照 Raycast（最后略微冲过头）；关时 0.15 秒淡出。
+/// Raycast 是从 0.97 倍放大，这里不缩放：搜索框是 AppKit 的 NSTextField，缩放的每一帧都按新的倍数重画文字，
+/// Core Graphics 的字形缓存每次多存一套、不释放，开关一次涨 0.6 MB（开关 60 次多 36 MB）。只平移不涨。
 extension AnyTransition {
     static var actionPanel: AnyTransition {
         .asymmetric(
-            insertion: .modifier(active: PopModifier(scale: 0.97, opacity: 0.6), identity: PopModifier(scale: 1, opacity: 1))
+            insertion: .modifier(active: PopModifier(rise: 6, opacity: 0.6), identity: PopModifier(rise: 0, opacity: 1))
                 .animation(.timingCurve(0.3, 0.7, 0, 1.26, duration: 0.25)),
             removal: .opacity.animation(.easeOut(duration: 0.15)))
     }
 }
 
 private struct PopModifier: ViewModifier {
-    let scale: CGFloat
+    let rise: CGFloat
     let opacity: Double
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(scale, anchor: .bottomTrailing)
+            .offset(y: rise)
             .opacity(opacity)
     }
 }
