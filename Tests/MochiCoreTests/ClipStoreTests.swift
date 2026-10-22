@@ -221,3 +221,59 @@ private func tiff(width: Int, height: Int) throws -> Data {
     try await t.store.setPinned(true, id: first.id)
     #expect(try await t.store.unpinnedCount() == 2)
 }
+
+@Test func movePinnedSwapsWithNeighbor() async throws {
+    let t = try TempStore()
+    var ids: [String: Int64] = [:]
+    for name in ["a", "b", "c", "d"] {
+        guard case .inserted(let id) = try await t.store.record(text(name)) else { Issue.record("应该是新增"); return }
+        ids[name] = id
+    }
+    for name in ["a", "b", "c"] {
+        try await t.store.setPinned(true, id: ids[name]!)
+        try await Task.sleep(for: .milliseconds(2))
+    }
+    // 后置顶的在上面
+    #expect(try await t.store.list().map(\.title) == ["c", "b", "a", "d"])
+    #expect(try await t.store.movePinned(id: ids["a"]!, up: true))
+    #expect(try await t.store.list().map(\.title) == ["c", "a", "b", "d"])
+    #expect(try await t.store.movePinned(id: ids["c"]!, up: false))
+    #expect(try await t.store.list().map(\.title) == ["a", "c", "b", "d"])
+    // 已经在头上、底下，没置顶的
+    #expect(try await !t.store.movePinned(id: ids["a"]!, up: true))
+    #expect(try await !t.store.movePinned(id: ids["b"]!, up: false))
+    #expect(try await !t.store.movePinned(id: ids["d"]!, up: true))
+}
+
+@Test func deleteCopiedSinceSkipsPinnedAndOlder() async throws {
+    let t = try TempStore()
+    let base = Date(timeIntervalSince1970: 1_000_000)
+    try await t.store.record(text("old", at: base))
+    try await t.store.record(text("recent", at: base + 10))
+    guard case .inserted(let pinnedID) = try await t.store.record(text("recent pinned", at: base + 20)) else { Issue.record("应该是新增"); return }
+    try await t.store.setPinned(true, id: pinnedID)
+    #expect(try await t.store.deleteCopied(since: base + 5) == 1)
+    #expect(Set(try await t.store.list().map(\.title)) == ["old", "recent pinned"])
+}
+
+@Test func clearCanStayInOneKind() async throws {
+    let t = try TempStore()
+    try await t.store.record(text("words"))
+    try await t.store.record(PasteboardSnapshot(items: [.init(types: [T.tiff], data: [T.tiff: try tiff(width: 40, height: 30)])],
+                                                sourceBundleID: nil, sourceName: nil, date: .now))
+    #expect(try await t.store.unpinnedCount(kind: .image) == 1)
+    #expect(try await t.store.unpinnedCount() == 2)
+    #expect(try await t.store.deleteAllUnpinned(kind: .image) == 1)
+    #expect(try await t.store.list().map(\.title) == ["words"])
+    #expect(t.imageFiles.isEmpty)
+}
+
+@Test func formatTypesListsStoredFormats() async throws {
+    let t = try TempStore()
+    let snapshot = PasteboardSnapshot(items: [.init(types: [T.plainText, T.rtf, T.html],
+                                                    data: [T.plainText: Data("hi".utf8), T.rtf: Data("{\\rtf1 hi}".utf8),
+                                                           T.html: Data("<b>hi</b>".utf8)])],
+                                      sourceBundleID: nil, sourceName: nil, date: .now)
+    guard case .inserted(let id) = try await t.store.record(snapshot) else { Issue.record("应该是新增"); return }
+    #expect(try await t.store.formatTypes(of: id) == [T.html, T.rtf])
+}

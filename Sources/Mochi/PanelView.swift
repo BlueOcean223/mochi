@@ -48,8 +48,22 @@ struct PanelView: View {
             }
         }
         .overlay {
-            if let count = model.clearConfirmation {
-                ClearConfirmation(model: model, count: count)
+            // 操作面板开着时点面板别处只是把它关掉，这一下不传下去。
+            if model.actionMenu != nil {
+                Color.black.opacity(0.001)
+                    .onTapGesture { model.perform?(.actions) }
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if let menu = model.actionMenu {
+                ActionPanel(model: model, menu: menu)
+                    .padding(PanelMetrics.footerInset)
+                    .transition(.actionPanel)
+            }
+        }
+        .overlay {
+            if let request = model.clearConfirmation {
+                ClearConfirmation(model: model, request: request)
             }
         }
         .overlay {
@@ -60,7 +74,7 @@ struct PanelView: View {
     }
 }
 
-private struct Hairline: View {
+struct Hairline: View {
     var vertical = false
 
     var body: some View {
@@ -70,7 +84,7 @@ private struct Hairline: View {
     }
 }
 
-private struct Keycap: View {
+struct Keycap: View {
     let key: String
 
     var body: some View {
@@ -181,6 +195,8 @@ private struct ClipList: View {
                                 .padding(EdgeInsets(top: 10, leading: 10, bottom: 5, trailing: 10))
                         case .clip(let clip):
                             ClipRow(clip: clip, isSelected: clip.id == model.selectedID)
+                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.rowFrames[clip.id] = $0 }
+                                .onDisappear { model.rowFrames[clip.id] = nil }
                                 .onTapGesture { model.select(clip.id) }
                                 .simultaneousGesture(TapGesture(count: 2).onEnded { model.perform?(.paste) })
                                 .onAppear { model.rowAppeared(clip) }
@@ -518,16 +534,16 @@ private struct InfoRow<Value: View>: View {
 /// 清空前问一句。回车清空、Esc 取消（PanelController.handleKey）。
 private struct ClearConfirmation: View {
     let model: PanelModel
-    let count: Int
+    let request: ClearRequest
 
     var body: some View {
         ZStack {
             Color.black.opacity(0.25)
                 .onTapGesture { model.cancelClear() }
             VStack(spacing: 4) {
-                Text("清空全部记录？")
+                Text(request.kind.map { _ in "清空所有\(model.kindLabel)？" } ?? "清空全部记录？")
                     .font(.system(size: 15, weight: .semibold))
-                Text(verbatim: "会删掉 \(count) 条，置顶的留着。删了找不回来。")
+                Text(verbatim: "会删掉 \(request.count) 条\(request.kind == nil ? "" : model.kindLabel + "记录")，置顶的留着。删了找不回来。")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -617,21 +633,24 @@ private struct Footer: View {
             .footerPill()
             Spacer(minLength: 0)
             if model.selectedClip != nil {
+                // 照 Raycast：右边是回车做的事和「操作 ⌘K」，复制等别的操作在 ⌘K 里。操作面板开着时它盖在这里，这颗胶囊淡出。
                 HStack(spacing: 2) {
                     if model.canPaste {
                         FooterButton(title: model.frontAppName.map { "粘贴到 \($0)" } ?? "粘贴", key: "↵", isPrimary: true) {
                             model.perform?(.paste)
                         }
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.12))
-                            .frame(width: 1, height: 12)
-                        FooterButton(title: "复制", key: "⌘↵") { model.perform?(.copy) }
                     } else {
                         FooterButton(title: "复制", key: "↵", isPrimary: true) { model.perform?(.copy) }
                     }
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.12))
+                        .frame(width: 1, height: 12)
+                    FooterButton(title: "操作", key: "⌘K") { model.perform?(.actions) }
                 }
                 .padding(.horizontal, 3)
                 .footerPill()
+                .opacity(model.actionMenu == nil ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: model.actionMenu == nil)
             }
         }
         .font(.system(size: 12))
@@ -641,9 +660,9 @@ private struct Footer: View {
     private func actions(for clip: Clip) -> [(title: String, key: String, command: PanelCommand)] {
         var actions = [(title: clip.isPinned ? "取消置顶" : "置顶", key: "⌘.", command: PanelCommand.pin)]
         switch clip.kind {
-        case .text: actions.append(clip.isLink ? ("打开链接", "⌘O", .openLink) : ("粘贴为纯文本", "⇧↵", .pastePlain))
+        case .text: actions.append(clip.isLink ? ("打开链接", "⌘O", .open) : ("粘贴为纯文本", "⌃⌘↵", .pastePlain))
         case .image: actions.append(("Quick Look", "⌘Y", .quickLook))
-        case .file: actions += [("Quick Look", "⌘Y", .quickLook), ("在 Finder 中显示", "⇧⌘F", .revealInFinder)]
+        case .file: actions += [("Quick Look", "⌘Y", .quickLook), ("在 Finder 中显示", "⇧⌘O", .revealInFinder)]
         }
         return actions
     }

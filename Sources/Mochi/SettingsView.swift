@@ -104,13 +104,13 @@ private struct ShortcutRecorder: View {
         } label: {
             HStack(spacing: 3) {
                 if !model.isRecording {
-                    ForEach(Array(model.shortcut.keys.enumerated()), id: \.offset) { Keycap(key: $0.element) }
+                    ForEach(Array(model.shortcut.keys.enumerated()), id: \.offset) { ShortcutKeycap(key: $0.element) }
                 } else if model.heldModifiers.isEmpty {
                     Text("按下快捷键")
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                 } else {
-                    ForEach(Array(model.heldModifiers.enumerated()), id: \.offset) { Keycap(key: $0.element) }
+                    ForEach(Array(model.heldModifiers.enumerated()), id: \.offset) { ShortcutKeycap(key: $0.element) }
                     Text(verbatim: "…").foregroundStyle(.secondary)
                 }
             }
@@ -135,7 +135,7 @@ private struct ShortcutRecorder: View {
     }
 }
 
-private struct Keycap: View {
+private struct ShortcutKeycap: View {
     let key: String
     @Environment(\.colorScheme) private var colorScheme
 

@@ -6,6 +6,9 @@ import SwiftUI
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
+    var fontSize: CGFloat = 18
+    /// 建出来就拿键盘焦点（⌘K 操作面板的搜索框）。
+    var focusesOnAppear = false
 
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField()
@@ -13,15 +16,19 @@ struct SearchField: NSViewRepresentable {
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = .systemFont(ofSize: 18)
+        field.font = .systemFont(ofSize: fontSize)
         // 系统默认的占位字在毛玻璃上几乎和正文一样深，用和分组标题一样的第三级颜色。
         field.placeholderAttributedString = NSAttributedString(string: placeholder, attributes: [
-            .foregroundColor: NSColor.tertiaryLabelColor, .font: NSFont.systemFont(ofSize: 18),
+            .foregroundColor: NSColor.tertiaryLabelColor, .font: NSFont.systemFont(ofSize: fontSize),
         ])
         field.usesSingleLineMode = true
         field.cell?.wraps = false
         field.cell?.isScrollable = true
         field.delegate = context.coordinator
+        if focusesOnAppear {
+            // 这时还没放进窗口。
+            DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+        }
         return field
     }
 

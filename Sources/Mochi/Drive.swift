@@ -22,6 +22,7 @@ import UniformTypeIdentifiers
 ///                             up down left right enter esc space tab dot comma
 ///     clipboard               打印剪切板（`MOCHI_PASTEBOARD` 那个）上的类型和文字
 ///     type 关键词             把搜索框改成这个（空着就是清空）
+///     typein 文字             打进现在有焦点的输入框（比如 ⌘K 操作面板的搜索框），和真打字一样
 ///     select 关键词           选中标题里有这个词的第一条（假数据的时间跟着当前时间走，按位置找不稳）
 ///     appearance dark|light
 ///     wait 300                毫秒
@@ -34,6 +35,8 @@ import UniformTypeIdentifiers
 ///     shot-all 名字           把 Mochi 自己在屏幕上的窗口合成一张（看 Quick Look 开关的过渡）
 ///     slow 10                 Quick Look 的动画放慢 10 倍，好逐帧截图；slow 1 恢复
 ///     hit 300 30              面板里这一点（左上角原点）上接鼠标的视图
+///     click 300 30            在应用里造一次左键点击交给面板（不动真鼠标）；rightclick 是右键。SwiftUI 的按钮、点按不认
+///     menu                    打印 ⌘K 操作面板的标题和每一行
 ///     move 100 50             把面板往右 100、往下 50 挪（和用户拖一样记下位置）
 ///     where                   打印面板左上角离屏幕可用区域左上角多远
 ///     trusted                 当作有辅助功能权限（底栏、设置里显示有权限的样子；照样不发 ⌘V）
@@ -83,6 +86,8 @@ final class Drive {
     }
 
     func run() async {
+        // 输出接到文件、管道时默认整块缓冲，脚本卡住被杀时最后的输出就丢了。一行一刷。
+        setvbuf(stdout, nil, _IOLBF, 0)
         try? FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
         for raw in lines {
             let line = raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
@@ -110,6 +115,13 @@ final class Drive {
         case "hide": panel.hide()
         case "key": key(argument)
         case "type": panel.model.setQuery(argument)
+        case "typein":
+            // 打进当前有键盘焦点的输入框（走字段编辑器，和真打字一样触发 controlTextDidChange）。
+            if let editor = panel.contentView?.window?.firstResponder as? NSTextView {
+                editor.insertText(argument, replacementRange: editor.selectedRange())
+            } else {
+                print("drive: 没有输入框有焦点")
+            }
         case "clipboard":
             let types = pasteboard.types?.map(\.rawValue) ?? []
             print("drive: clipboard types=\(types) string=\(pasteboard.string(forType: .string) ?? "nil")")
@@ -132,6 +144,8 @@ final class Drive {
         case "backdrop": setBackdrop(Int(argument))
         case "slow": QuickLook.slowdown = Double(argument) ?? 1
         case "hit": printHit(argument)
+        case "click", "rightclick": await click(argument, right: command == "rightclick")
+        case "menu": printActionMenu()
         case "move":
             let parts = argument.split(separator: " ").compactMap { Double($0) }
             if parts.count == 2 { panel.moveBy(dx: parts[0], dy: -parts[1]) }
@@ -274,6 +288,37 @@ final class Drive {
         } catch {
             print("drive: ScreenCaptureKit 失败：\(error)")
         }
+    }
+
+    /// 在应用里造一次点击（按下、抬起）交给面板，和真点击走同一条路，不动真鼠标。
+    /// 只对 AppKit 自己处理的有用（右键、输入框）：SwiftUI 的点按手势不认，脚本跑时面板不是 key 窗口，第一下点击只算激活。
+    private func click(_ argument: String, right: Bool) async {
+        let parts = argument.split(separator: " ").compactMap { Double($0) }
+        guard parts.count == 2, let view = panel.contentView, let window = view.window else { return }
+        let point = NSPoint(x: parts[0], y: view.bounds.height - parts[1])
+        func event(_ type: NSEvent.EventType, pressure: Float) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: pressure)
+        }
+        guard let down = event(right ? .rightMouseDown : .leftMouseDown, pressure: 1),
+              let up = event(right ? .rightMouseUp : .leftMouseUp, pressure: 0) else { return }
+        // 抬起先进队列：按下的一方要是自己开循环等抬起，能等到；不开循环的话抬起由主循环随后发出。
+        NSApp.postEvent(up, atStart: false)
+        NSApp.sendEvent(down)
+        // 等主循环把抬起发出去再恢复不接鼠标。
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+
+    /// 打印操作面板现在的样子：标题、每一行（高亮的前面有 >）。
+    private func printActionMenu() {
+        guard let menu = panel.model.actionMenu else {
+            print("drive: 操作面板没开")
+            return
+        }
+        let rows = menu.visible.enumerated().map { index, action in
+            "\(index == menu.highlighted ? ">" : " ") \(action.title)\(action.shortcut.map { " \($0)" } ?? "")"
+        }
+        print("drive: 操作面板「\(menu.level.title)」搜「\(menu.query)」\n" + rows.joined(separator: "\n"))
     }
 
     /// 面板里这一点（左上角原点）上接鼠标的是哪个视图，往上数几层。
@@ -467,6 +512,14 @@ enum Fixtures {
         func text(_ string: String) -> [PasteboardSnapshot.Item] {
             [.init(types: [T.plainText], data: [T.plainText: Data(string.utf8)])]
         }
+        /// 带 RTF、HTML 的文字，像从网页、文档里复制的。
+        func richText(_ string: String) -> [PasteboardSnapshot.Item] {
+            let styled = NSAttributedString(string: string, attributes: [.font: NSFont.boldSystemFont(ofSize: 14)])
+            let rtf = (try? styled.data(from: NSRange(location: 0, length: styled.length),
+                                        documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])) ?? Data()
+            return [.init(types: [T.plainText, T.rtf, T.html],
+                          data: [T.plainText: Data(string.utf8), T.rtf: rtf, T.html: Data("<b>\(string)</b>".utf8)])]
+        }
         func files(_ urls: [URL]) -> [PasteboardSnapshot.Item] {
             urls.map { .init(types: [T.fileURL], data: [T.fileURL: Data($0.absoluteString.utf8)]) }
         }
@@ -481,6 +534,7 @@ enum Fixtures {
             (text("/usr/bin/log show --last 1m --predicate 'subsystem == \"com.blueocean223.mochi\"' --style compact"),
              ("com.mitchellh.ghostty", "Ghostty"), 4 * day, false),
             (files([home.appending(path: "Documents/季度报告.pdf")]), ("com.apple.finder", "访达"), 3 * day, false),
+            (richText("季度会议纪要：营收同比增长 12%"), ("com.apple.Safari", "Safari"), 2 * day, false),
             (text("#FF6363"), ("com.microsoft.VSCode", "Code"), 1 * day + 6 * 60 * minute, false),
             (image(try picture(width: 1200, height: 800, colors: [(0.96, 0.70, 0.48), (0.91, 0.46, 0.42), (0.36, 0.29, 0.48)])),
              ("com.google.Chrome", "Google Chrome"), 1 * day + 4 * 60 * minute, false),

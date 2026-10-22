@@ -297,14 +297,25 @@ public actor ClipStore {
         return formats
     }
 
+    /// 文本条目除了纯文本还存了哪些格式（类型名），「选格式粘贴」列出来用，不读数据。
+    public func formatTypes(of id: Int64) throws -> [String] {
+        let statement = try db.prepare("SELECT type FROM formats WHERE clip_id = ?1 ORDER BY type").bind(.int(id))
+        var types: [String] = []
+        while try statement.step() {
+            if let type = statement.text(0) { types.append(type) }
+        }
+        return types
+    }
+
     public func count() throws -> Int {
         let statement = try db.prepare("SELECT count(*) FROM clips")
         return try statement.step() ? Int(statement.int(0)) : 0
     }
 
-    /// 清空全部会删掉的条数。
-    public func unpinnedCount() throws -> Int {
-        let statement = try db.prepare("SELECT count(*) FROM clips WHERE pinned_at IS NULL")
+    /// 清空会删掉的条数：不置顶的，`kind` 不为 nil 时只算这一类。
+    public func unpinnedCount(kind: ClipKind? = nil) throws -> Int {
+        let statement = try db.prepare("SELECT count(*) FROM clips WHERE pinned_at IS NULL AND (?1 IS NULL OR kind = ?1)")
+            .bind(kind.map { .int(Int64($0.rawValue)) } ?? .null)
         return try statement.step() ? Int(statement.int(0)) : 0
     }
 
@@ -334,10 +345,37 @@ public actor ClipStore {
         try deleteClips(where: "id = ?1", .int(id))
     }
 
-    /// 清空全部，置顶的留着。
+    /// 清空，置顶的留着；`kind` 不为 nil 时只清这一类。
     @discardableResult
-    public func deleteAllUnpinned() throws -> Int {
-        try deleteClips(where: "pinned_at IS NULL")
+    public func deleteAllUnpinned(kind: ClipKind? = nil) throws -> Int {
+        try deleteClips(where: "pinned_at IS NULL AND (?1 IS NULL OR kind = ?1)", kind.map { .int(Int64($0.rawValue)) } ?? .null)
+    }
+
+    /// 删掉 `date` 以后复制的（「删除最近 5 分钟的」），置顶的不删。
+    @discardableResult
+    public func deleteCopied(since date: Date) throws -> Int {
+        try deleteClips(where: "pinned_at IS NULL AND last_copied_at >= ?1", .double(date.timeIntervalSince1970))
+    }
+
+    /// 在置顶的里面往上（`up`）或往下挪一位：和相邻那条对调置顶时间（置顶的按置顶时间从新到旧排）。
+    /// 已经在头上、底下，或者没置顶，返回 false。
+    @discardableResult
+    public func movePinned(id: Int64, up: Bool) throws -> Bool {
+        try db.transaction {
+            let current = try db.prepare("SELECT pinned_at FROM clips WHERE id = ?1 AND pinned_at IS NOT NULL").bind(.int(id))
+            guard try current.step() else { return false }
+            let pinnedAt = current.double(0)
+            let neighbor = try db.prepare(up
+                ? "SELECT id, pinned_at FROM clips WHERE pinned_at > ?1 ORDER BY pinned_at ASC LIMIT 1"
+                : "SELECT id, pinned_at FROM clips WHERE pinned_at < ?1 ORDER BY pinned_at DESC LIMIT 1")
+                .bind(.double(pinnedAt))
+            guard try neighbor.step() else { return false }
+            let (otherID, otherPinnedAt) = (neighbor.int(0), neighbor.double(1))
+            let update = try db.prepare("UPDATE clips SET pinned_at = ?1 WHERE id = ?2")
+            try update.bind(.double(otherPinnedAt), .int(id)).run()
+            try update.bind(.double(pinnedAt), .int(otherID)).run()
+            return true
+        }
     }
 
     /// 删掉最后一次复制早于 `date` 的，置顶的不过期。

@@ -25,8 +25,17 @@ final class ClipPanel: NSPanel {
 
     /// 搜索框空着时，按在它上面拖的是整个面板：它占了搜索栏的大半，空着时点它也没有用处（Tinycast 也这么做）。
     /// 有字、正在用输入法组字时照常点、选字。搜索栏别的空白处由 WindowDragArea 拖。
+    /// 右键按下，参数是面板里的位置（左上角原点）。处理了返回真。SwiftUI 的行上没有右键手势，只能在这里截。
+    var onRightClick: ((CGPoint) -> Bool)?
+    /// 空着的搜索框能拖面板。跑调试脚本时关掉：脚本在应用里造的点击不能变成拖窗口，拖动跟的是真鼠标。
+    var dragsFromEmptyField = true
+
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown, let field = textField(at: event.locationInWindow), field.stringValue.isEmpty,
+        if event.type == .rightMouseDown, let height = contentView?.bounds.height,
+           onRightClick?(CGPoint(x: event.locationInWindow.x, y: height - event.locationInWindow.y)) == true {
+            return
+        }
+        if event.type == .leftMouseDown, dragsFromEmptyField, let field = textField(at: event.locationInWindow), field.stringValue.isEmpty,
            !((field.currentEditor() as? NSTextView)?.hasMarkedText() ?? false) {
             performDrag(with: event)
             return
@@ -63,6 +72,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     private let hud: HUD
     private let quickLook = QuickLook()
     private var wantsVisible = false
+    /// 呼出时的前台应用。⌥↵ 粘贴且不关闭面板时 ⌘V 直接发给它的进程。
+    private var frontApp: NSRunningApplication?
     /// 呼出时自己摆的位置。windowDidMove 里和它一样就不是用户拖的。
     private var placedOrigin: NSPoint?
     private var keyMonitor: Any?
@@ -74,6 +85,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         didSet {
             panel.level = isQuiet ? NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)) - 1) : .floating
             panel.ignoresMouseEvents = isQuiet
+            panel.dragsFromEmptyField = !isQuiet
             quickLook.level = panel.level
             paster.isQuiet = isQuiet
             hud.isQuiet = isQuiet
@@ -89,6 +101,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.contentView = makeContentView()
         model.perform = { [weak self] command in self?.perform(command) }
+        panel.onRightClick = { [weak self] point in self?.rightClick(at: point) ?? false }
         model.selectionChanged = { [weak self] clip in self?.followSelection(clip) }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.panel else { return event }
@@ -105,6 +118,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
     #endif
     var contentView: NSView? { panel.contentView }
+
     private let tint = LightTintView()
 
     /// 浅色外观下盖在毛玻璃上的那层白有多浓。
@@ -141,10 +155,12 @@ final class PanelController: NSObject, NSWindowDelegate {
         guard !wantsVisible else { return }
         wantsVisible = true
         let started = ContinuousClock.now
-        let frontApp = NSWorkspace.shared.frontmostApplication
+        let frontApp = NSWorkspace.shared.frontmostApplication.flatMap { $0 == .current ? nil : $0 }
+        self.frontApp = frontApp
         Task {
             // 先把第一页读好再显示，免得先露出上次的列表再跳。
-            await model.prepare(isPaused: settings.isPaused, frontAppName: frontApp?.localizedName, canPaste: paster.canPaste)
+            await model.prepare(isPaused: settings.isPaused, frontAppName: frontApp?.localizedName, frontAppIcon: frontApp?.icon,
+                                canPaste: paster.canPaste)
             guard wantsVisible else { return }
             let origin = origin()
             placedOrigin = origin
@@ -244,6 +260,25 @@ final class PanelController: NSObject, NSWindowDelegate {
             }
             return true
         }
+        if model.actionMenu != nil {
+            switch command {
+            case .down: model.actionMenu?.move(1)
+            case .up: model.actionMenu?.move(-1)
+            case .paste:
+                if let action = model.actionMenu?.highlightedAction { perform(action.command) }
+            case .escape:
+                if model.actionMenu?.back() == false { closeActionMenu() }
+            case .sectionUp, .sectionDown, .typeMenu:
+                break
+            case nil:
+                // Tab 吞掉；打字、删字、⌘A 给操作面板的搜索框。
+                return Int(event.keyCode) == kVK_Tab
+            case let command?:
+                // 面板开着时各操作的快捷键照样能用。
+                perform(command)
+            }
+            return true
+        }
         if quickLook.isVisible, command == .escape {
             quickLook.close(to: quickLookSource())
             return true
@@ -266,6 +301,16 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func perform(_ command: PanelCommand) {
+        // 文件的 ⌘O 是进「用其他应用打开」子菜单。
+        if command == .open, model.selectedClip?.kind == .file {
+            perform(.submenu(.openWith))
+            return
+        }
+        // 操作面板里选了一项，或者面板开着时按了某个操作的快捷键：先关面板再做。子菜单是换一层，不关。
+        switch command {
+        case .actions, .submenu: break
+        default: closeActionMenu()
+        }
         switch command {
         case .down: model.move(1)
         case .up: model.move(-1)
@@ -274,9 +319,28 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .typeMenu: model.toggleTypeMenu()
         case .escape:
             if model.query.isEmpty { hide() } else { model.setQuery("") }
-        case .paste: paste(plainText: false, sendKeystroke: true)
-        case .pastePlain: paste(plainText: true, sendKeystroke: true)
-        case .copy: paste(plainText: false, sendKeystroke: false)
+        case .paste: paste(.paste)
+        case .pastePlain: paste(.paste, plainText: true)
+        case .copy: paste(.copy)
+        case .pasteKeepOpen: paste(.keepOpen)
+        case .pasteFormat(let type): paste(.paste, format: type)
+        case .actions:
+            if model.actionMenu == nil { openActionMenu() } else { closeActionMenu() }
+        case .submenu(let submenu):
+            if model.actionMenu == nil {
+                openActionMenu(submenu: submenu)
+            } else {
+                Task { await model.pushSubmenu(submenu) }
+            }
+        case .openWith(let app): open(with: app)
+        case .deleteRecent(let minutes):
+            Task {
+                let count = await model.deleteRecent(minutes: minutes)
+                let span = minutes < 60 ? "\(minutes) 分钟" : minutes < 1440 ? "\(minutes / 60) 小时" : "\(minutes / 1440) 天"
+                hud.show(count == 0 ? "最近 \(span)没有要删的，置顶的不删" : "删掉了最近 \(span)的 \(count) 条")
+            }
+        case .movePinnedUp: Task { await model.movePinned(up: true) }
+        case .movePinnedDown: Task { await model.movePinned(up: false) }
         case .pin: Task { await model.togglePin() }
         case .delete: Task { await model.deleteSelected() }
         case .clearAll:
@@ -285,7 +349,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             }
         case .quickLook: toggleQuickLook()
         case .revealInFinder: revealInFinder()
-        case .openLink: openLink()
+        case .open: openLink()
         case .openAccessibilitySettings:
             hide()
             paster.openAccessibilitySettings()
@@ -295,16 +359,53 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
     }
 
+    // MARK: - 操作面板
+
+    private func openActionMenu(submenu: ActionSubmenu? = nil) {
+        guard model.selectedClip != nil else { return }
+        model.isTypeMenuOpen = false
+        Task { await model.openActionMenu(submenu: submenu) }
+    }
+
+    /// 右键一行：选中它，打开操作面板。操作面板开着时右键哪里都是关掉它（和左键点别处一样）。
+    private func rightClick(at point: CGPoint) -> Bool {
+        if model.actionMenu != nil {
+            closeActionMenu()
+            return true
+        }
+        guard model.clearConfirmation == nil, let id = model.clipID(at: point) else { return false }
+        model.select(id)
+        openActionMenu()
+        return true
+    }
+
+    /// 关掉操作面板，键盘焦点回到主搜索框。
+    private func closeActionMenu() {
+        guard model.actionMenu != nil else { return }
+        model.actionMenu = nil
+        focusSearchField()
+    }
+
     // MARK: - 操作
 
-    /// 回车粘贴、⇧↵ 粘贴纯文本、⌘↵ 只复制。先收起面板，键盘焦点回到前台应用，写好剪切板再替用户按 ⌘V。
+    private enum PasteMode {
+        /// 收起面板，替用户按 ⌘V。
+        case paste
+        /// 收起面板，只写剪切板。
+        case copy
+        /// ⌥↵：面板不收，⌘V 直接发给前台应用的进程。
+        case keepOpen
+    }
+
+    /// 回车粘贴、⌃⌘↵ 粘贴纯文本、⌘↵ 只复制、⌥↵ 粘贴且不关闭面板、选格式粘贴。
+    /// 先收起面板，键盘焦点回到前台应用，写好剪切板再替用户按 ⌘V。
     /// 没有辅助功能权限时只复制，提示一句，再弹一次系统的授权提示。
-    private func paste(plainText: Bool, sendKeystroke: Bool) {
+    private func paste(_ mode: PasteMode, plainText: Bool = false, format: String? = nil) {
         guard let clip = model.selectedClip else { return }
-        hide()
+        if mode != .keepOpen { hide() }
         Task {
             var note: String?
-            switch await paster.write(clip, plainText: plainText && clip.kind == .text) {
+            switch await paster.write(clip, plainText: plainText, format: format) {
             case .written:
                 break
             case .failed:
@@ -316,10 +417,10 @@ final class PanelController: NSObject, NSWindowDelegate {
             case .missingFiles(let missing, _):
                 note = "有 \(missing) 个文件已经不在了"
             }
-            if !sendKeystroke {
+            if mode == .copy {
                 hud.show(note.map { "已复制，\($0)" } ?? "已复制到剪切板")
             } else if paster.canPaste {
-                await paster.sendPasteKeystroke()
+                await paster.sendPasteKeystroke(to: mode == .keepOpen ? frontApp?.processIdentifier : nil)
                 if let note { hud.show(note) }
             } else {
                 hud.show("已复制。没有辅助功能权限，要自己按 ⌘V")
@@ -338,6 +439,20 @@ final class PanelController: NSObject, NSWindowDelegate {
             print("panel: 不打开 Finder（调试脚本）：\(urls.map(\.path))")
         } else {
             NSWorkspace.shared.activateFileViewerSelecting(urls)
+        }
+    }
+
+    /// 「用其他应用打开」子菜单里选了一个应用。
+    private func open(with app: URL) {
+        guard let clip = model.selectedClip, clip.kind == .file else { return }
+        let urls = clip.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+        hide()
+        if urls.isEmpty {
+            hud.show(clip.fileURLs.count == 1 ? "文件已经不在了" : "这些文件都已经不在了")
+        } else if isQuiet {
+            print("panel: 不打开（调试脚本）：\(urls.map(\.lastPathComponent)) 用 \(app.lastPathComponent)")
+        } else {
+            NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
         }
     }
 
@@ -436,11 +551,19 @@ extension PanelCommand {
         let command: PanelCommand?
         switch Int(event.keyCode) {
         case kVK_DownArrow:
-            command = modifiers == [] ? .down : modifiers == .command ? .sectionDown : nil
+            command = modifiers == [] ? .down : modifiers == .command ? .sectionDown : modifiers == [.option, .command] ? .movePinnedDown : nil
         case kVK_UpArrow:
-            command = modifiers == [] ? .up : modifiers == .command ? .sectionUp : nil
+            command = modifiers == [] ? .up : modifiers == .command ? .sectionUp : modifiers == [.option, .command] ? .movePinnedUp : nil
         case kVK_Return, kVK_ANSI_KeypadEnter:
-            command = modifiers == [] ? .paste : modifiers == .command ? .copy : modifiers == .shift ? .pastePlain : nil
+            switch modifiers {
+            case []: command = .paste
+            case .command: command = .copy
+            case .option: command = .pasteKeepOpen
+            case [.option, .command]: command = .submenu(.pasteAs)
+            // ⇧↵ 是 Mochi 原来的键，⌃⌘↵ 是 Raycast 的，都认。
+            case [.control, .command], .shift: command = .pastePlain
+            default: command = nil
+            }
         case kVK_Escape:
             command = modifiers == [] ? .escape : nil
         case kVK_ANSI_P:
@@ -448,13 +571,21 @@ extension PanelCommand {
         case kVK_ANSI_Period:
             command = modifiers == .command ? .pin : nil
         case kVK_ANSI_X:
-            command = modifiers == .control ? .delete : modifiers == [.control, .shift] ? .clearAll : nil
+            switch modifiers {
+            case .control: command = .delete
+            case [.control, .shift]: command = .clearAll
+            case [.command, .shift]: command = .submenu(.deleteRecent)
+            default: command = nil
+            }
+        case kVK_ANSI_K:
+            command = modifiers == .command ? .actions : nil
         case kVK_ANSI_Y:
             command = modifiers == .command ? .quickLook : nil
         case kVK_ANSI_F:
+            // Mochi 原来的键；Raycast 是 ⇧⌘O。
             command = modifiers == [.command, .shift] ? .revealInFinder : nil
         case kVK_ANSI_O:
-            command = modifiers == .command ? .openLink : nil
+            command = modifiers == .command ? .open : modifiers == [.command, .shift] ? .revealInFinder : nil
         case kVK_ANSI_Comma:
             command = modifiers == .command ? .settings : nil
         default:

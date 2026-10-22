@@ -53,9 +53,9 @@ final class Paster {
         }
     }
 
-    /// 写回剪切板。文本带上存下的 RTF、HTML、网址（`plainText` 时只写纯文本）；图片写 PNG；文件写文件 URL。
-    /// 写完挪到历史最前，和再复制一遍一样。
-    func write(_ clip: Clip, plainText: Bool = false) async -> Outcome {
+    /// 写回剪切板。文本带上存下的 RTF、HTML、网址（`plainText` 时只写纯文本，`format` 时只写这一种）；
+    /// 图片写 PNG；文件写文件 URL（`plainText` 时写路径，一行一个）。写完挪到历史最前，和再复制一遍一样。
+    func write(_ clip: Clip, plainText: Bool = false, format: String? = nil) async -> Outcome {
         let item = NSPasteboardItem()
         var outcome = Outcome.written
         var urls: [URL] = []
@@ -63,10 +63,15 @@ final class Paster {
             switch clip.kind {
             case .text:
                 guard let text = try await store.text(of: clip.id) else { return .failed }
-                item.setString(text, forType: .string)
-                if !plainText {
-                    for (type, data) in try await store.formats(of: clip.id) {
-                        item.setData(data, forType: NSPasteboard.PasteboardType(type))
+                if let format, format != PasteboardTypes.plainText {
+                    guard let data = try await store.formats(of: clip.id)[format] else { return .failed }
+                    item.setData(data, forType: NSPasteboard.PasteboardType(format))
+                } else {
+                    item.setString(text, forType: .string)
+                    if !plainText && format == nil {
+                        for (type, data) in try await store.formats(of: clip.id) {
+                            item.setData(data, forType: NSPasteboard.PasteboardType(type))
+                        }
                     }
                 }
             case .image:
@@ -78,6 +83,10 @@ final class Paster {
                     outcome = .missingFiles(missing: clip.fileURLs.count - urls.count, total: clip.fileURLs.count)
                 }
                 if urls.isEmpty { return outcome }
+                if plainText {
+                    item.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+                    urls = []
+                }
             }
         } catch {
             log.error("read clip for paste failed: \(error, privacy: .public)")
@@ -97,19 +106,24 @@ final class Paster {
     }
 
     /// 替用户按 ⌘V。面板收起以后前台应用本来就是激活的，等一下让键盘焦点回到它的窗口再发。
-    func sendPasteKeystroke() async {
+    /// 给了 `pid`（⌥↵ 粘贴且不关闭面板）就直接发给那个进程：面板还开着、拿着键盘，发到系统的事件流里会落到面板上。
+    func sendPasteKeystroke(to pid: pid_t? = nil) async {
         guard !isQuiet else {
-            print("paster: 不发 ⌘V（调试脚本）")
+            print("paster: 不发 ⌘V（调试脚本）\(pid.map { "，目标进程 \($0)" } ?? "")")
             return
         }
-        try? await Task.sleep(for: .milliseconds(30))
+        try? await Task.sleep(for: .milliseconds(pid == nil ? 30 : 50))
         let source = CGEventSource(stateID: .combinedSessionState)
         let key = CGKeyCode(kVK_ANSI_V)
         for keyDown in [true, false] {
             let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: keyDown)
-            // 明着设成只有 ⌘：用户这时可能还按着 ⇧（⇧↵ 粘贴纯文本），不能变成 ⇧⌘V。
+            // 明着设成只有 ⌘：用户这时可能还按着 ⇧、⌥、⌃（⌃⌘↵、⌥↵），不能变成别的组合。
             event?.flags = .maskCommand
-            event?.post(tap: .cghidEventTap)
+            if let pid {
+                event?.postToPid(pid)
+            } else {
+                event?.post(tap: .cghidEventTap)
+            }
         }
     }
 }

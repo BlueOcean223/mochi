@@ -53,14 +53,37 @@ struct Preview {
     let content: Content
 }
 
-/// 面板里的键盘命令和底栏按钮。
-enum PanelCommand {
+/// 面板里的键盘命令、底栏按钮和 ⌘K 操作面板里的操作。
+enum PanelCommand: Equatable {
     case up, down, sectionUp, sectionDown, typeMenu, escape
-    case paste, copy, pastePlain, pin, delete, clearAll, quickLook, revealInFinder, openLink
+    case paste, copy, pastePlain, pin, delete, clearAll, quickLook, revealInFinder
+    /// ⌥↵：粘贴到前台应用，面板不关。
+    case pasteKeepOpen
+    /// ⌘O：链接用浏览器打开，文件打开「用其他应用打开」子菜单。
+    case open
+    /// ⌥⌘↑、⌥⌘↓：在置顶的里面挪一位。
+    case movePinnedUp, movePinnedDown
+    /// ⌘K：操作面板开关。
+    case actions
+    /// 打开操作面板里的子菜单（⌥⌘↵ 选格式粘贴、⇧⌘X 删除最近的）。
+    case submenu(ActionSubmenu)
+    /// 子菜单里的一项：只写这一种格式再粘贴。
+    case pasteFormat(String)
+    /// 子菜单里的一项：用这个应用打开文件。
+    case openWith(URL)
+    /// 子菜单里的一项：删掉最近这么多分钟里复制的。
+    case deleteRecent(minutes: Int)
     /// 底栏「去授权」：打开系统设置的辅助功能页。
     case openAccessibilitySettings
     /// ⌘,：收起面板，打开设置窗口。
     case settings
+}
+
+/// 清空前的确认。
+struct ClearRequest {
+    let count: Int
+    /// 有类型筛选时只清这一类。
+    let kind: ClipKind?
 }
 
 /// 面板的状态：搜索词、类型筛选、当前这一页、选中哪条、预览。界面只读它，改都走这里的方法。
@@ -98,14 +121,27 @@ final class PanelModel {
     private(set) var frontAppName: String?
     /// 有辅助功能权限，回车能替用户按 ⌘V；没有时回车只复制。
     private(set) var canPaste = true
-    /// 清空前的确认：要删的条数。
-    private(set) var clearConfirmation: Int?
+    /// 呼出面板时前台应用的图标，操作面板里粘贴那几行用。
+    private(set) var frontAppIcon: NSImage?
+    /// 清空前的确认。
+    private(set) var clearConfirmation: ClearRequest?
+    /// ⌘K 操作面板，开着时不是 nil。
+    var actionMenu: ActionMenu?
     var isTypeMenuOpen = false
     var typeMenuIndex = 0
     /// 每次加一，列表就滚回顶上（呼出、换搜索词时）。
     private(set) var scrollToTop = 0
     /// 每次加一，列表就滚到选中的那条（置顶以后它挪到了最上面）。
     private(set) var scrollToSelection = 0
+
+    /// 列表里现在建出来的行在面板里的位置（左上角原点），右键时按位置找是哪一行。
+    @ObservationIgnored var rowFrames: [Int64: CGRect] = [:]
+
+    /// 面板里这一点（左上角原点）上是哪一行。只认列表那一栏里露出来的部分：滚出去的行位置还在，但不在这一栏里。
+    func clipID(at point: CGPoint) -> Int64? {
+        guard point.x < PanelMetrics.listWidth, point.y > PanelMetrics.headerHeight else { return nil }
+        return rowFrames.first { $0.value.contains(point) }?.key
+    }
 
     /// 底栏按钮、双击走这里，由 PanelController 接。
     @ObservationIgnored var perform: ((PanelCommand) -> Void)?
@@ -152,11 +188,13 @@ final class PanelModel {
     // MARK: - 打开、搜索、筛选
 
     /// 每次呼出前调：清空搜索词和类型，读第一页，选中第一条。
-    func prepare(isPaused: Bool, frontAppName: String?, canPaste: Bool) async {
+    func prepare(isPaused: Bool, frontAppName: String?, frontAppIcon: NSImage?, canPaste: Bool) async {
         self.isPaused = isPaused
         self.frontAppName = frontAppName
+        self.frontAppIcon = frontAppIcon
         self.canPaste = canPaste
         isTypeMenuOpen = false
+        actionMenu = nil
         clearConfirmation = nil
         query = ""
         kind = nil
@@ -290,11 +328,11 @@ final class PanelModel {
         await reload(keepSelection: true)
     }
 
-    /// 先问一句；没有能删的（全是置顶的）返回 false。
+    /// 先问一句；有类型筛选时只清这一类。没有能删的（全是置顶的）返回 false。
     func askToClear() async -> Bool {
-        let count = (try? await store.unpinnedCount()) ?? 0
+        let count = (try? await store.unpinnedCount(kind: kind)) ?? 0
         guard count > 0 else { return false }
-        clearConfirmation = count
+        clearConfirmation = ClearRequest(count: count, kind: kind)
         return true
     }
 
@@ -303,14 +341,46 @@ final class PanelModel {
     }
 
     func confirmClear() async {
+        let kind = clearConfirmation?.kind
         clearConfirmation = nil
         do {
-            try await store.deleteAllUnpinned()
+            try await store.deleteAllUnpinned(kind: kind)
         } catch {
             log.error("clear failed: \(error, privacy: .public)")
         }
         await reload()
         scrollToTop += 1
+    }
+
+    /// 删掉最近这么多分钟里复制的（置顶的不删），返回删了几条。
+    func deleteRecent(minutes: Int) async -> Int {
+        let count: Int
+        do {
+            count = try await store.deleteCopied(since: Date.now.addingTimeInterval(-Double(minutes) * 60))
+        } catch {
+            log.error("delete recent failed: \(error, privacy: .public)")
+            return 0
+        }
+        await reload(keepSelection: true)
+        return count
+    }
+
+    /// 选中的置顶条目在置顶的里面往上、往下挪一位。
+    func movePinned(up: Bool) async {
+        guard let clip = selectedClip, clip.isPinned else { return }
+        do {
+            guard try await store.movePinned(id: clip.id, up: up) else { return }
+        } catch {
+            log.error("move pinned failed: \(error, privacy: .public)")
+        }
+        await reload(keepSelection: true)
+        scrollToSelection += 1
+    }
+
+    /// 文本条目除了纯文本还存了哪些格式。
+    func formatTypes(of clip: Clip) async -> [String] {
+        guard clip.kind == .text else { return [] }
+        return (try? await store.formatTypes(of: clip.id)) ?? []
     }
 
     // MARK: - 类型菜单
