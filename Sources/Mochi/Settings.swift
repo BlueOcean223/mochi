@@ -40,6 +40,7 @@ final class Settings {
             Key.retentionHours: Retention.threeMonths.rawValue,
             Key.hotKeyCode: Shortcut.standard.keyCode,
             Key.hotKeyModifiers: Shortcut.standard.modifiers,
+            Key.sequenceAddsNewline: true,
             // 钥匙串访问、系统的「密码」应用：它们多半会打密码标记，这里再兜一层。
             Key.ignoredApps: ["com.apple.keychainaccess", "com.apple.Passwords"],
         ])
@@ -62,6 +63,29 @@ final class Settings {
             defaults.set(newValue.keyCode, forKey: Key.hotKeyCode)
             defaults.set(newValue.modifiers, forKey: Key.hotKeyModifiers)
         }
+    }
+
+    /// 按顺序粘贴的快捷键，默认没有。
+    var sequenceShortcut: Shortcut? {
+        get {
+            guard defaults.object(forKey: Key.sequenceKeyCode) != nil else { return nil }
+            return Shortcut(keyCode: defaults.integer(forKey: Key.sequenceKeyCode), modifiers: defaults.integer(forKey: Key.sequenceModifiers))
+        }
+        set {
+            if let newValue {
+                defaults.set(newValue.keyCode, forKey: Key.sequenceKeyCode)
+                defaults.set(newValue.modifiers, forKey: Key.sequenceModifiers)
+            } else {
+                defaults.removeObject(forKey: Key.sequenceKeyCode)
+                defaults.removeObject(forKey: Key.sequenceModifiers)
+            }
+        }
+    }
+
+    /// 按顺序粘贴文本时后面加一个换行（Raycast 的 Add a new line after pasting text，默认开）。
+    var sequenceAddsNewline: Bool {
+        get { defaults.bool(forKey: Key.sequenceAddsNewline) }
+        set { defaults.set(newValue, forKey: Key.sequenceAddsNewline) }
     }
 
     var enterAction: EnterAction {
@@ -109,5 +133,8 @@ final class Settings {
         static let panelOffsets = "panelOffsets"
         static let enterAction = "enterAction"
         static let prefersPlainText = "prefersPlainText"
+        static let sequenceKeyCode = "sequenceKeyCode"
+        static let sequenceModifiers = "sequenceModifiers"
+        static let sequenceAddsNewline = "sequenceAddsNewline"
     }
 }

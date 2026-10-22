@@ -109,6 +109,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 }
 
+/// 设置里能录的全局快捷键。
+enum ShortcutSlot {
+    /// 呼出面板。
+    case panel
+    /// 按顺序粘贴，可以不设。
+    case sequence
+
+    var title: String {
+        switch self {
+        case .panel: "呼出快捷键"
+        case .sequence: "按顺序粘贴"
+        }
+    }
+}
+
 /// 设置窗口里显示的状态和改设置的操作。改完马上存、马上生效，没有「应用」按钮。
 @MainActor
 @Observable
@@ -141,10 +156,12 @@ final class SettingsModel {
     }
 
     private(set) var shortcut: Shortcut
-    private(set) var isRecording = false
+    private(set) var sequenceShortcut: Shortcut?
+    /// 正在录哪一个。
+    private(set) var recording: ShortcutSlot?
     /// 录快捷键时已经按住的修饰键，比如 ⌃、⌘。
     private(set) var heldModifiers: [String] = []
-    private(set) var shortcutProblem: String?
+    private(set) var shortcutProblems: [ShortcutSlot: String] = [:]
     private(set) var retention: Retention
     var retentionChange: RetentionChange?
     var enterAction: EnterAction {
@@ -152,6 +169,9 @@ final class SettingsModel {
     }
     var prefersPlainText: Bool {
         didSet { settings.prefersPlainText = prefersPlainText }
+    }
+    var sequenceAddsNewline: Bool {
+        didSet { settings.sequenceAddsNewline = sequenceAddsNewline }
     }
     private(set) var loginItem = LoginItem.off
     private(set) var loginProblem: String?
@@ -172,80 +192,120 @@ final class SettingsModel {
     private let settings: Settings
     private let store: ClipStore
     private let recorder: Recorder
-    private let hotKey: PanelHotKey
+    private let hotKeys: [ShortcutSlot: GlobalHotKey]
     private let paster: Paster
 
-    init(settings: Settings, store: ClipStore, recorder: Recorder, hotKey: PanelHotKey, paster: Paster) {
+    init(settings: Settings, store: ClipStore, recorder: Recorder, hotKeys: [ShortcutSlot: GlobalHotKey], paster: Paster) {
         self.settings = settings
         self.store = store
         self.recorder = recorder
-        self.hotKey = hotKey
+        self.hotKeys = hotKeys
         self.paster = paster
         shortcut = settings.shortcut
+        sequenceShortcut = settings.sequenceShortcut
         retention = settings.retention
         enterAction = settings.enterAction
         prefersPlainText = settings.prefersPlainText
+        sequenceAddsNewline = settings.sequenceAddsNewline
     }
 
     func refresh() {
         shortcut = settings.shortcut
+        sequenceShortcut = settings.sequenceShortcut
         retention = settings.retention
         enterAction = settings.enterAction
         prefersPlainText = settings.prefersPlainText
+        sequenceAddsNewline = settings.sequenceAddsNewline
         refreshTrust()
         refreshLoginItem()
         loadIgnoredApps()
-        if !isRecording {
-            shortcutProblem = hotKey.isRegistered ? nil : "现在没生效，换一个试试"
+        for slot in [ShortcutSlot.panel, .sequence] where slot != recording {
+            checkRegistered(slot)
         }
     }
 
-    // MARK: - 呼出快捷键
+    // MARK: - 全局快捷键
 
-    func startRecording() {
-        guard !isRecording else { return }
-        hotKey.suspend()
-        isRecording = true
+    var isRecording: Bool { recording != nil }
+
+    func shortcut(for slot: ShortcutSlot) -> Shortcut? {
+        switch slot {
+        case .panel: shortcut
+        case .sequence: sequenceShortcut
+        }
+    }
+
+    func startRecording(_ slot: ShortcutSlot = .panel) {
+        guard recording != slot else { return }
+        stopRecording()
+        hotKeys[slot]?.suspend()
+        recording = slot
         heldModifiers = []
-        shortcutProblem = nil
+        shortcutProblems[slot] = nil
     }
 
     func stopRecording() {
-        guard isRecording else { return }
-        isRecording = false
+        guard let slot = recording else { return }
+        recording = nil
         heldModifiers = []
-        hotKey.register()
-        shortcutProblem = hotKey.isRegistered ? nil : "现在没生效，换一个试试"
+        hotKeys[slot]?.register()
+        checkRegistered(slot)
     }
 
-    /// 录快捷键时的按键。Esc 不带修饰键是取消；不能用的组合说明原因，接着录。
+    /// 按顺序粘贴不要快捷键了。
+    func clearSequenceShortcut() {
+        if recording == .sequence {
+            recording = nil
+            heldModifiers = []
+        }
+        _ = hotKeys[.sequence]?.change(to: nil)
+        sequenceShortcut = nil
+        shortcutProblems[.sequence] = nil
+    }
+
+    /// 录快捷键时的按键。Esc 不带修饰键是取消，⌫ 不带修饰键是清掉（只有按顺序粘贴能清）；
+    /// 不能用的组合说明原因，接着录。
     func handleRecording(_ event: NSEvent) {
+        guard let slot = recording else { return }
         switch event.type {
         case .flagsChanged:
             heldModifiers = Shortcut.symbols(Shortcut.carbonModifiers(event.modifierFlags))
         case .keyDown where !event.isARepeat:
             let new = Shortcut(event)
+            let other: ShortcutSlot = slot == .panel ? .sequence : .panel
             if new == Shortcut(keyCode: kVK_Escape, modifiers: 0) {
                 stopRecording()
+            } else if new == Shortcut(keyCode: kVK_Delete, modifiers: 0), slot == .sequence {
+                clearSequenceShortcut()
             } else if !new.leavesTypingAlone {
-                shortcutProblem = "要带上 ⌃、⌥、⌘ 里的一个，F 键可以单按"
+                shortcutProblems[slot] = "要带上 ⌃、⌥、⌘ 里的一个，F 键可以单按"
             } else if new == Shortcut(keyCode: kVK_ANSI_V, modifiers: cmdKey) {
-                shortcutProblem = "⌘V 是粘贴，Mochi 粘贴时自己要按它"
+                shortcutProblems[slot] = "⌘V 是粘贴，Mochi 粘贴时自己要按它"
+            } else if new == shortcut(for: other) {
+                shortcutProblems[slot] = "\(new.description) 已经是\(other.title)了"
             } else if new.isTakenBySystem {
-                shortcutProblem = "\(new.description) 是系统快捷键，换一个"
+                shortcutProblems[slot] = "\(new.description) 是系统快捷键，换一个"
             } else {
-                isRecording = false
+                recording = nil
                 heldModifiers = []
-                if hotKey.change(to: new) {
-                    shortcut = new
-                    shortcutProblem = nil
+                if hotKeys[slot]?.change(to: new) == true {
+                    switch slot {
+                    case .panel: shortcut = new
+                    case .sequence: sequenceShortcut = new
+                    }
+                    shortcutProblems[slot] = nil
                 } else {
-                    shortcutProblem = "\(new.description) 注册不上，还用 \(shortcut.description)"
+                    let old = shortcut(for: slot).map { "，还用 \($0.description)" } ?? ""
+                    shortcutProblems[slot] = "\(new.description) 注册不上\(old)"
                 }
             }
         default:
             break
         }
+    }
+
+    private func checkRegistered(_ slot: ShortcutSlot) {
+        shortcutProblems[slot] = hotKeys[slot]?.isRegistered == false ? "现在没生效，换一个试试" : nil
     }
 
     // MARK: - 保留时长

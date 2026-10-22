@@ -50,31 +50,34 @@ final class HotKey {
     }
 }
 
-/// 呼出面板的那个全局快捷键：按设置里存的组合注册。录新快捷键时先停掉，不然按下现在这个组合会直接呼出面板；
-/// 换成新的组合时注册不上就还用旧的。
+/// 按设置注册的全局快捷键：呼出面板、按顺序粘贴。录新快捷键时先停掉，不然按下现在这个组合会直接触发；
+/// 换成新的组合时注册不上就还用旧的。按顺序粘贴默认没有快捷键（nil）。
 @MainActor
-final class PanelHotKey {
-    private let settings: Settings
+final class GlobalHotKey {
+    private let load: () -> Shortcut?
+    private let save: (Shortcut?) -> Void
     private let action: @MainActor () -> Void
     private var hotKey: HotKey?
     /// 跑调试脚本时不注册，免得和正在用的 Mochi 抢。
     var isQuiet = false
     /// 换了组合以后，菜单栏菜单里显示的快捷键跟着改。
-    var changed: ((Shortcut) -> Void)?
+    var changed: ((Shortcut?) -> Void)?
 
-    init(settings: Settings, action: @escaping @MainActor () -> Void) {
-        self.settings = settings
+    init(load: @escaping () -> Shortcut?, save: @escaping (Shortcut?) -> Void, action: @escaping @MainActor () -> Void) {
+        self.load = load
+        self.save = save
         self.action = action
     }
 
-    var shortcut: Shortcut { settings.shortcut }
-    var isRegistered: Bool { isQuiet || hotKey != nil }
+    var shortcut: Shortcut? { load() }
+    /// 没设快捷键也算生效。
+    var isRegistered: Bool { isQuiet || shortcut == nil || hotKey != nil }
 
     @discardableResult
     func register() -> Bool {
-        guard !isQuiet, hotKey == nil else { return isRegistered }
+        guard !isQuiet, hotKey == nil, let shortcut else { return isRegistered }
         hotKey = HotKey(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers, action: action)
-        if hotKey == nil { log.error("hot key \(self.shortcut.description, privacy: .public) is taken") }
+        if hotKey == nil { log.error("hot key \(shortcut.description, privacy: .public) is taken") }
         return hotKey != nil
     }
 
@@ -83,16 +86,17 @@ final class PanelHotKey {
         hotKey = nil
     }
 
-    func change(to new: Shortcut) -> Bool {
+    /// 换成 `new`；nil 是不要快捷键。
+    func change(to new: Shortcut?) -> Bool {
         suspend()
-        if !isQuiet {
+        if !isQuiet, let new {
             guard let key = HotKey(keyCode: new.keyCode, modifiers: new.modifiers, action: action) else {
                 register()
                 return false
             }
             hotKey = key
         }
-        settings.shortcut = new
+        save(new)
         changed?(new)
         return true
     }

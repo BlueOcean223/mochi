@@ -283,8 +283,7 @@ public actor ClipStore {
     public func list(matching query: String = "", filter: ClipFilter? = nil, limit: Int = 100, offset: Int = 0) throws -> [Clip] {
         let pattern = query.isEmpty ? "" : "%" + escapeLike(query.lowercased()) + "%"
         let statement = try db.prepare("""
-            SELECT id, kind, title, file_paths, image_file, image_width, image_height, byte_size, char_count,
-                   source_bundle_id, source_name, pinned_at, first_copied_at, last_copied_at, custom_title, category
+            SELECT \(Self.clipColumns)
             FROM clips
             WHERE (\(filter?.condition ?? "1"))
               AND (?1 = '' OR search_text LIKE ?1 ESCAPE '\\' OR lower(custom_title) LIKE ?1 ESCAPE '\\')
@@ -294,27 +293,52 @@ public actor ClipStore {
             .bind(.text(pattern), .int(Int64(limit)), .int(Int64(offset)))
         var clips: [Clip] = []
         while try statement.step() {
-            let paths = statement.text(3).flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
-            clips.append(Clip(
-                id: statement.int(0),
-                kind: ClipKind(rawValue: Int(statement.int(1))) ?? .text,
-                title: statement.text(2) ?? "",
-                fileURLs: paths.map { URL(filePath: $0) },
-                imageURL: statement.text(4).map { imagesDirectory.appending(path: $0) },
-                thumbnailURL: statement.text(4).map { imagesDirectory.appending(path: Self.thumbnailFile(for: $0)) },
-                imageWidth: statement.isNull(5) ? nil : Int(statement.int(5)),
-                imageHeight: statement.isNull(6) ? nil : Int(statement.int(6)),
-                byteSize: Int(statement.int(7)),
-                characterCount: statement.isNull(8) ? nil : Int(statement.int(8)),
-                sourceBundleID: statement.text(9),
-                sourceName: statement.text(10),
-                isPinned: !statement.isNull(11),
-                firstCopiedAt: Date(timeIntervalSince1970: statement.double(12)),
-                lastCopiedAt: Date(timeIntervalSince1970: statement.double(13)),
-                customTitle: statement.text(14),
-                category: TextCategory(rawValue: Int(statement.int(15))) ?? .plain))
+            clips.append(clip(from: statement))
         }
         return clips
+    }
+
+    /// 按顺序粘贴的下一条：比 `id` 那条早复制的里最新的一条不置顶的；`id` 为 nil 时是最新的一条不置顶的。
+    /// `id` 那条已经删了时返回 nil。
+    public func unpinnedClip(before id: Int64?) throws -> Clip? {
+        let statement = try db.prepare("""
+            SELECT \(Self.clipColumns)
+            FROM clips
+            WHERE pinned_at IS NULL
+              AND (?1 IS NULL OR (last_copied_at, id) < (SELECT last_copied_at, id FROM clips WHERE id = ?1))
+            ORDER BY last_copied_at DESC, id DESC
+            LIMIT 1
+            """)
+            .bind(id.map { .int($0) } ?? .null)
+        return try statement.step() ? clip(from: statement) : nil
+    }
+
+    private static let clipColumns = """
+        id, kind, title, file_paths, image_file, image_width, image_height, byte_size, char_count,
+        source_bundle_id, source_name, pinned_at, first_copied_at, last_copied_at, custom_title, category
+        """
+
+    /// 按 `clipColumns` 的顺序读一行。
+    private func clip(from statement: Statement) -> Clip {
+        let paths = statement.text(3).flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
+        return Clip(
+            id: statement.int(0),
+            kind: ClipKind(rawValue: Int(statement.int(1))) ?? .text,
+            title: statement.text(2) ?? "",
+            fileURLs: paths.map { URL(filePath: $0) },
+            imageURL: statement.text(4).map { imagesDirectory.appending(path: $0) },
+            thumbnailURL: statement.text(4).map { imagesDirectory.appending(path: Self.thumbnailFile(for: $0)) },
+            imageWidth: statement.isNull(5) ? nil : Int(statement.int(5)),
+            imageHeight: statement.isNull(6) ? nil : Int(statement.int(6)),
+            byteSize: Int(statement.int(7)),
+            characterCount: statement.isNull(8) ? nil : Int(statement.int(8)),
+            sourceBundleID: statement.text(9),
+            sourceName: statement.text(10),
+            isPinned: !statement.isNull(11),
+            firstCopiedAt: Date(timeIntervalSince1970: statement.double(12)),
+            lastCopiedAt: Date(timeIntervalSince1970: statement.double(13)),
+            customTitle: statement.text(14),
+            category: TextCategory(rawValue: Int(statement.int(15))) ?? .plain)
     }
 
     /// 文本条目的全文。

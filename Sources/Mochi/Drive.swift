@@ -19,7 +19,7 @@ import UniformTypeIdentifiers
 ///     hide
 ///     key down                按键，走和真实按键一样的 PanelController.handleKey。写法是修饰键（ctrl alt shift cmd）
 ///                             加键名，比如 cmd-down、ctrl-shift-x、cmd-dot、cmd-comma；键名有字母、数字、f1–f12、
-///                             up down left right enter esc space tab dot comma
+///                             up down left right enter esc space tab dot comma delete
 ///     clipboard               打印剪切板（`MOCHI_PASTEBOARD` 那个）上的类型和文字
 ///     type 关键词             把搜索框改成这个（空着就是清空）
 ///     typein 文字             打进现在有焦点的输入框（比如 ⌘K 操作面板的搜索框），和真打字一样
@@ -46,7 +46,10 @@ import UniformTypeIdentifiers
 ///     trusted                 当作有辅助功能权限（底栏、设置里显示有权限的样子；照样不发 ⌘V）
 ///     settings                打开设置窗口（也压在桌面下面）
 ///     settings-close
-///     record                  开始录呼出快捷键
+///     record                  开始录呼出快捷键；record sequence 是录按顺序粘贴的
+///     clear-sequence          清掉按顺序粘贴的快捷键（设置里的 ⓧ）
+///     sequence                按一下按顺序粘贴的快捷键（不发 ⌘V，用 clipboard 看写了什么）
+///     newline on|off          设置里「粘贴文本后换行」
 ///     press ctrl-alt-k        录快捷键时按键，写法同 key；只写修饰键（ctrl-cmd）是按住修饰键。加应用的弹层开着时给弹层
 ///     pick                    点「忽略的应用」的 +。弹层（NSPopover）压不到桌面下面，脚本里把弹层的内容放进一个压在桌面下的窗口
 ///     pick-type 微            在弹层的搜索框里打字
@@ -68,13 +71,15 @@ final class Drive {
     private let settingsWindow: SettingsWindowController
     private let paster: Paster
     private let pasteboard: NSPasteboard
+    private let sequence: PasteSequence
     private let shots: URL
     private var pickerWindow: NSWindow?
     private var backdropWindow: NSWindow?
 
     nonisolated static var isRequested: Bool { ProcessInfo.processInfo.environment["MOCHI_DRIVE"] != nil }
 
-    init?(panel: PanelController, settingsWindow: SettingsWindowController, paster: Paster, pasteboard: NSPasteboard) {
+    init?(panel: PanelController, settingsWindow: SettingsWindowController, paster: Paster, pasteboard: NSPasteboard,
+          sequence: PasteSequence) {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MOCHI_DRIVE"], let script = try? String(contentsOfFile: path, encoding: .utf8) else {
             return nil
@@ -84,6 +89,7 @@ final class Drive {
         self.settingsWindow = settingsWindow
         self.paster = paster
         self.pasteboard = pasteboard
+        self.sequence = sequence
         shots = URL(filePath: environment["MOCHI_SHOTS"] ?? "/tmp/mochi-shots", directoryHint: .isDirectory)
         panel.isQuiet = true
         settingsWindow.isQuiet = true
@@ -128,7 +134,7 @@ final class Drive {
             }
         case "clipboard":
             let types = pasteboard.types?.map(\.rawValue) ?? []
-            print("drive: clipboard types=\(types) string=\(pasteboard.string(forType: .string) ?? "nil")")
+            print("drive: clipboard types=\(types) string=\(pasteboard.string(forType: .string)?.debugDescription ?? "nil")")
         case "appearance": NSApp.appearance = NSAppearance(named: argument == "light" ? .aqua : .darkAqua)
         case "wait": try? await Task.sleep(for: .milliseconds(Int(argument) ?? 0))
         case "select":
@@ -174,7 +180,10 @@ final class Drive {
         case "shot-backdrop": await captureWithBackdrop(name: argument)
         case "settings": settingsWindow.show()
         case "settings-close": settingsWindow.close()
-        case "record": settings.startRecording()
+        case "record": settings.startRecording(argument == "sequence" ? .sequence : .panel)
+        case "clear-sequence": settings.clearSequenceShortcut()
+        case "sequence": sequence.pasteNext()
+        case "newline": settings.sequenceAddsNewline = argument == "on"
         case "press":
             if let event = event(argument, window: settingsWindow.windowNumber ?? 0) {
                 if settings.isRecording {
@@ -457,7 +466,7 @@ final class Drive {
         var codes = [
             "up": kVK_UpArrow, "down": kVK_DownArrow, "left": kVK_LeftArrow, "right": kVK_RightArrow,
             "enter": kVK_Return, "esc": kVK_Escape, "space": kVK_Space, "tab": kVK_Tab,
-            "dot": kVK_ANSI_Period, "comma": kVK_ANSI_Comma,
+            "dot": kVK_ANSI_Period, "comma": kVK_ANSI_Comma, "delete": kVK_Delete,
         ]
         let letters = [kVK_ANSI_A, kVK_ANSI_B, kVK_ANSI_C, kVK_ANSI_D, kVK_ANSI_E, kVK_ANSI_F, kVK_ANSI_G, kVK_ANSI_H, kVK_ANSI_I,
                        kVK_ANSI_J, kVK_ANSI_K, kVK_ANSI_L, kVK_ANSI_M, kVK_ANSI_N, kVK_ANSI_O, kVK_ANSI_P, kVK_ANSI_Q, kVK_ANSI_R,

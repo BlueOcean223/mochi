@@ -55,7 +55,8 @@ final class Paster {
 
     /// 写回剪切板。文本带上存下的 RTF、HTML、网址（`plainText` 时只写纯文本，`format` 时只写这一种）；
     /// 图片写 PNG；文件写文件 URL（`plainText` 时写路径，一行一个）。写完挪到历史最前，和再复制一遍一样。
-    func write(_ clip: Clip, plainText: Bool = false, format: String? = nil) async -> Outcome {
+    /// `newline`（按顺序粘贴）：文本只写纯文本，末尾没有换行就加一个。`touches` 为 false 时不挪到最前（按顺序粘贴）。
+    func write(_ clip: Clip, plainText: Bool = false, format: String? = nil, newline: Bool = false, touches: Bool = true) async -> Outcome {
         let item = NSPasteboardItem()
         var outcome = Outcome.written
         var urls: [URL] = []
@@ -67,8 +68,8 @@ final class Paster {
                     guard let data = try await store.formats(of: clip.id)[format] else { return .failed }
                     item.setData(data, forType: NSPasteboard.PasteboardType(format))
                 } else {
-                    item.setString(text, forType: .string)
-                    if !plainText && format == nil {
+                    item.setString(newline && !text.hasSuffix("\n") ? text + "\n" : text, forType: .string)
+                    if !plainText && !newline && format == nil {
                         for (type, data) in try await store.formats(of: clip.id) {
                             item.setData(data, forType: NSPasteboard.PasteboardType(type))
                         }
@@ -97,6 +98,7 @@ final class Paster {
         let ok = urls.isEmpty ? pasteboard.writeObjects([item]) : pasteboard.writeObjects(urls as [NSURL])
         recorder.ignoreCurrentChange()
         guard ok else { return .failed }
+        guard touches else { return outcome }
         do {
             try await store.touch(id: clip.id)
         } catch {

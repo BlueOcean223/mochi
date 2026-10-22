@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 设置窗口里的内容：呼出快捷键、保留时长、开机启动、回车做什么、辅助功能权限、忽略的应用。样子照 Raycast。
+/// 设置窗口里的内容：呼出快捷键、保留时长、开机启动、回车做什么、按顺序粘贴、辅助功能权限、忽略的应用。样子照 Raycast。
 struct SettingsView: View {
     @Bindable var model: SettingsModel
 
@@ -8,14 +8,14 @@ struct SettingsView: View {
         Form {
             Section {
                 LabeledContent {
-                    ShortcutRecorder(model: model)
+                    ShortcutRecorder(model: model, slot: .panel)
                 } label: {
                     Text("呼出快捷键")
                     // 总有一行小字，开始录的时候窗口不跳。
-                    if let problem = model.shortcutProblem {
+                    if let problem = model.shortcutProblems[.panel] {
                         Text(problem).foregroundStyle(.red)
                     } else {
-                        Text(model.isRecording ? "按下新的组合，Esc 取消" : "点右边录新的组合")
+                        Text(model.recording == .panel ? "按下新的组合，Esc 取消" : "点右边录新的组合")
                     }
                 }
                 Picker(selection: Binding(get: { model.retention }, set: { model.chooseRetention($0) })) {
@@ -56,6 +56,30 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent {
+                    HStack(spacing: 6) {
+                        if model.sequenceShortcut != nil, model.recording != .sequence {
+                            ClearButton { model.clearSequenceShortcut() }
+                        }
+                        ShortcutRecorder(model: model, slot: .sequence)
+                    }
+                } label: {
+                    Text("按顺序粘贴")
+                    if let problem = model.shortcutProblems[.sequence] {
+                        Text(problem).foregroundStyle(.red)
+                    } else if model.recording == .sequence {
+                        Text("按下新的组合，⌫ 清掉，Esc 取消")
+                    } else {
+                        Text("每按一次，粘贴下一条更早的记录")
+                    }
+                }
+                Toggle(isOn: $model.sequenceAddsNewline) {
+                    Text("粘贴文本后换行")
+                    Text("按顺序粘贴文本时，每条后面加一个换行")
+                }
+            }
+
+            Section {
+                LabeledContent {
                     if model.isTrusted {
                         Label {
                             Text("已授权")
@@ -79,7 +103,7 @@ struct SettingsView: View {
         // 标题栏不画标题以后，上面的空白显得太多，收一点。滚动的时候不收，不然内容会滚到红绿灯底下。
         .padding(.top, scrolls ? 0 : -12)
         // 窗口跟着内容一样高；忽略的应用多到窗口太高时改成固定高度，里面滚动。
-        .frame(width: 480, height: scrolls ? 720 : nil)
+        .frame(width: 480, height: scrolls ? 760 : nil)
         .fixedSize(horizontal: false, vertical: !scrolls)
         .scrollDisabled(!scrolls)
         .fileImporter(isPresented: $model.isChoosingFile, allowedContentTypes: [.applicationBundle], allowsMultipleSelection: true) { result in
@@ -99,8 +123,8 @@ struct SettingsView: View {
         }
     }
 
-    /// 11 个时窗口大约 704 高，再多就固定 720、里面滚动。
-    private var scrolls: Bool { model.ignoredApps.count > 11 }
+    /// 6 个时窗口大约 760 高，再多就固定 760、里面滚动。13 寸的 MacBook Air 屏幕可用的高度在 900 上下。
+    private var scrolls: Bool { model.ignoredApps.count > 6 }
 
     private var retentionTitle: String {
         "改成只保留 \(model.retentionChange?.retention.title ?? "")？"
@@ -110,15 +134,24 @@ struct SettingsView: View {
 /// 点一下开始录，再点一下或者按 Esc 取消。每个键画成一个键帽，录的时候按住的修饰键一个个冒出来。
 private struct ShortcutRecorder: View {
     let model: SettingsModel
+    let slot: ShortcutSlot
     @State private var isHovering = false
+
+    private var isRecording: Bool { model.recording == slot }
 
     var body: some View {
         Button {
-            model.isRecording ? model.stopRecording() : model.startRecording()
+            isRecording ? model.stopRecording() : model.startRecording(slot)
         } label: {
             HStack(spacing: 3) {
-                if !model.isRecording {
-                    ForEach(Array(model.shortcut.keys.enumerated()), id: \.offset) { ShortcutKeycap(key: $0.element) }
+                if !isRecording {
+                    if let shortcut = model.shortcut(for: slot) {
+                        ForEach(Array(shortcut.keys.enumerated()), id: \.offset) { ShortcutKeycap(key: $0.element) }
+                    } else {
+                        Text("录快捷键")
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                    }
                 } else if model.heldModifiers.isEmpty {
                     Text("按下快捷键")
                         .foregroundStyle(.secondary)
@@ -132,7 +165,7 @@ private struct ShortcutRecorder: View {
             .frame(minWidth: 96, minHeight: 26)
             .background(fill, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay {
-                if model.isRecording {
+                if isRecording {
                     RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.accentColor, lineWidth: 2)
                 }
             }
@@ -140,12 +173,27 @@ private struct ShortcutRecorder: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .accessibilityLabel(Text(verbatim: "呼出快捷键 \(model.shortcut.description)"))
+        .accessibilityLabel(Text(verbatim: "\(slot.title) \(model.shortcut(for: slot)?.description ?? "没有")"))
     }
 
     private var fill: Color {
-        if model.isRecording { return Color(nsColor: .windowBackgroundColor) }
+        if isRecording { return Color(nsColor: .windowBackgroundColor) }
         return .primary.opacity(isHovering ? 0.12 : 0.08)
+    }
+}
+
+/// 快捷键左边的 ⓧ：不要这个快捷键了。
+private struct ClearButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.tertiary)
+        }
+        .buttonStyle(.borderless)
+        .help("清掉快捷键")
+        .accessibilityLabel(Text("清掉快捷键"))
     }
 }
 

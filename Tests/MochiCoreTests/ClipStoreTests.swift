@@ -361,3 +361,19 @@ private func tiff(width: Int, height: Int) throws -> Data {
     #expect(try await reopened.list().map(\.category) == [.color, .link, .plain])
     #expect(try await reopened.list(filter: .text).map(\.title) == ["plain words"])
 }
+
+@Test func sequenceGoesToOlderUnpinnedClips() async throws {
+    let t = try TempStore()
+    let base = Date(timeIntervalSince1970: 1_000_000)
+    for (i, title) in ["a", "b", "pinned", "c"].enumerated() {
+        guard case .inserted(let id) = try await t.store.record(text(title, at: base + Double(i))) else { continue }
+        if title == "pinned" { try await t.store.setPinned(true, id: id) }
+    }
+    var titles: [String] = []
+    var last: Int64?
+    while let clip = try await t.store.unpinnedClip(before: last) {
+        titles.append(clip.title)
+        last = clip.id
+    }
+    #expect(titles == ["c", "b", "a"])
+}

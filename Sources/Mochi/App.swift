@@ -24,7 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenu: StatusMenu?
     private var recorder: Recorder?
     private var panel: PanelController?
-    private var hotKey: PanelHotKey?
+    private var hotKey: GlobalHotKey?
+    private var sequenceHotKey: GlobalHotKey?
     private var settingsWindow: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -55,19 +56,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.recorder = recorder
         log.notice("recording into \(directory.path, privacy: .public)")
         let paster = Paster(store: store, pasteboard: pasteboard, recorder: recorder)
-        let panel = PanelController(store: store, settings: settings, paster: paster, hud: HUD())
+        let hud = HUD()
+        let panel = PanelController(store: store, settings: settings, paster: paster, hud: hud)
         self.panel = panel
-        let hotKey = PanelHotKey(settings: settings) { [weak panel] in panel?.toggle() }
-        hotKey.changed = { [weak self] shortcut in self?.statusMenu?.showShortcut(shortcut) }
+        let settings = settings
+        let hotKey = GlobalHotKey(load: { settings.shortcut }, save: { if let new = $0 { settings.shortcut = new } }) { [weak panel] in
+            panel?.toggle()
+        }
+        hotKey.changed = { [weak self] shortcut in if let shortcut { self?.statusMenu?.showShortcut(shortcut) } }
         self.hotKey = hotKey
+        let sequence = PasteSequence(store: store, settings: settings, paster: paster, pasteboard: pasteboard, hud: hud)
+        let sequenceHotKey = GlobalHotKey(load: { settings.sequenceShortcut }, save: { settings.sequenceShortcut = $0 }) {
+            sequence.pasteNext()
+        }
+        self.sequenceHotKey = sequenceHotKey
         let settingsWindow = SettingsWindowController(
-            model: SettingsModel(settings: settings, store: store, recorder: recorder, hotKey: hotKey, paster: paster))
+            model: SettingsModel(settings: settings, store: store, recorder: recorder, hotKeys: [.panel: hotKey, .sequence: sequenceHotKey],
+                                 paster: paster))
         self.settingsWindow = settingsWindow
         panel.openSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
         #if DEBUG
-        if let drive = Drive(panel: panel, settingsWindow: settingsWindow, paster: paster, pasteboard: pasteboard) {
-            hotKey.isQuiet = true  // 跑脚本时不占全局快捷键，免得和正在用的 Mochi 抢。
+        if let drive = Drive(panel: panel, settingsWindow: settingsWindow, paster: paster, pasteboard: pasteboard, sequence: sequence) {
+            // 跑脚本时不占全局快捷键，免得和正在用的 Mochi 抢。
+            hotKey.isQuiet = true
+            sequenceHotKey.isQuiet = true
             Task {
                 await Fixtures.seedIfRequested(store)
                 await drive.run()
@@ -76,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         hotKey.register()
+        sequenceHotKey.register()
     }
 }
 
