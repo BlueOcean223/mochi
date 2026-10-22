@@ -1,0 +1,87 @@
+# 推到 main、提 PR 时：跑测试、打包，打好的 Mochi.app 放在这次运行的 Artifacts 里。
+# 推 v 开头的标签（v0.2.0）时：再建一个 GitHub Release，附上 Mochi-0.2.0.zip。
+#
+# 签名：仓库 Secrets 里有 MOCHI_CERT_P12（证书和私钥的 p12，base64）和 MOCHI_CERT_PASSWORD 时用它签，
+# 辅助功能权限认签名，换了新版本权限还在；没有就是 ad-hoc 签名，每个版本都要重新给权限。
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    env:
+      HAS_CERT: ${{ secrets.MOCHI_CERT_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Test
+        run: scripts/test.sh
+
+      - name: Import signing certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          CERT_P12: ${{ secrets.MOCHI_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MOCHI_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/mochi.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/mochi.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/mochi.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          # 不加这一步 codesign 会等着弹框要钥匙串密码。
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/mochi.p12"
+
+      - name: Bundle
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            export MOCHI_VERSION="$VERSION"
+          else
+            VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)-${GITHUB_SHA::7}"
+          fi
+          export MOCHI_BUILD="$GITHUB_RUN_NUMBER"
+          if [ "$HAS_CERT" != true ]; then export SIGN_IDENTITY=-; fi
+          scripts/bundle.sh release
+          codesign --verify --strict --verbose=2 build/Mochi.app
+          ditto -c -k --keepParent build/Mochi.app "build/Mochi-$VERSION.zip"
+          echo "ZIP=build/Mochi-$VERSION.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Mochi
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: Mochi
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" Mochi-*.zip --repo "$GITHUB_REPOSITORY" --title "Mochi ${GITHUB_REF_NAME#v}" --generate-notes

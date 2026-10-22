@@ -83,6 +83,10 @@ final class PanelController: NSObject, NSWindowDelegate {
     var openSettings: (() -> Void)?
     /// 在面板里暂停、恢复了记录，菜单栏图标跟着变。
     var pauseChanged: (() -> Void)?
+    #if DEBUG
+    /// 调试脚本截图时当作前台应用的名字和图标（底栏「粘贴到 X」、⌘K 里的图标）。
+    var pretendFrontApp: (name: String, icon: NSImage)?
+    #endif
 
     /// 调试脚本在跑（`Drive`）：面板压在桌面壁纸下面，用户看不见；不抢键盘、不接鼠标，失焦也不收起；
     /// 不发 ⌘V，不打开 Finder、浏览器。
@@ -169,7 +173,11 @@ final class PanelController: NSObject, NSWindowDelegate {
         self.frontApp = frontApp
         Task {
             // 先把第一页读好再显示，免得先露出上次的列表再跳。
-            await model.prepare(isPaused: settings.isPaused, frontAppName: frontApp?.localizedName, frontAppIcon: frontApp?.icon,
+            var frontAppName = frontApp?.localizedName, frontAppIcon = frontApp?.icon
+            #if DEBUG
+            if let pretend = pretendFrontApp { (frontAppName, frontAppIcon) = (pretend.name, pretend.icon) }
+            #endif
+            await model.prepare(isPaused: settings.isPaused, frontAppName: frontAppName, frontAppIcon: frontAppIcon,
                                 canPaste: paster.canPaste, enterAction: settings.enterAction, prefersPlainText: settings.prefersPlainText)
             guard wantsVisible else { return }
             let origin = origin()

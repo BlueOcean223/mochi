@@ -42,6 +42,7 @@ import UniformTypeIdentifiers
 ///     click 300 30            在应用里造一次左键点击交给面板（不动真鼠标）；rightclick 是右键。SwiftUI 的按钮、点按不认
 ///     menu                    打印 ⌘K 操作面板的标题和每一行
 ///     appmenu                 点底栏左边的「设置」（Mochi 自己的菜单），再来一次是关
+///     front-app com.apple.Notes   下次呼出时当作前台应用是它（截图用）
 ///     move 100 50             把面板往右 100、往下 50 挪（和用户拖一样记下位置）
 ///     where                   打印面板左上角离屏幕可用区域左上角多远
 ///     trusted                 当作有辅助功能权限（底栏、设置里显示有权限的样子；照样不发 ⌘V）
@@ -171,6 +172,13 @@ final class Drive {
         case "click", "rightclick": await click(argument, right: command == "rightclick")
         case "menu": printActionMenu()
         case "appmenu": panel.model.perform?(.appMenu)
+        case "front-app":
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: argument) {
+                panel.pretendFrontApp = (FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""),
+                                         NSWorkspace.shared.icon(forFile: url.path))
+            } else {
+                print("drive: 没有这个应用 \(argument)")
+            }
         case "move":
             let parts = argument.split(separator: " ").compactMap { Double($0) }
             if parts.count == 2 { panel.moveBy(dx: parts[0], dy: -parts[1]) }

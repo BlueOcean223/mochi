@@ -1,5 +1,6 @@
 #!/bin/bash
 # 编译并拼成 .app：scripts/bundle.sh [debug|release]，产物是 build/Mochi.app。
+# MOCHI_VERSION、MOCHI_BUILD 有值时写进包里的 Info.plist（发布时用标签的版本号），仓库里的不动。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,6 +13,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Mochi"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+if [ -n "${MOCHI_VERSION:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MOCHI_VERSION" "$APP/Contents/Info.plist"
+fi
+if [ -n "${MOCHI_BUILD:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $MOCHI_BUILD" "$APP/Contents/Info.plist"
+fi
 # 图标由 scripts/icon.swift 画，改图案时重跑它。
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
