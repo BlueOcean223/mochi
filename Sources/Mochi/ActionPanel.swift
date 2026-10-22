@@ -65,7 +65,7 @@ struct ActionPanel: View {
                         }
                         ActionRow(action: action, isHighlighted: index == menu.highlighted)
                             .id(action.id)
-                            .onHover { if $0 { model.actionMenu?.highlighted = index } }
+                            .onHover { if $0 { model.actionMenu?.hover(index) } }
                             .onTapGesture { model.perform?(action.command) }
                     }
                 }

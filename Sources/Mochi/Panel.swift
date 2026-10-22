@@ -160,7 +160,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         Task {
             // 先把第一页读好再显示，免得先露出上次的列表再跳。
             await model.prepare(isPaused: settings.isPaused, frontAppName: frontApp?.localizedName, frontAppIcon: frontApp?.icon,
-                                canPaste: paster.canPaste)
+                                canPaste: paster.canPaste, enterAction: settings.enterAction, prefersPlainText: settings.prefersPlainText)
             guard wantsVisible else { return }
             let origin = origin()
             placedOrigin = origin
@@ -275,7 +275,7 @@ final class PanelController: NSObject, NSWindowDelegate {
                 return Int(event.keyCode) == kVK_Tab
             case let command?:
                 // 面板开着时各操作的快捷键照样能用。
-                perform(command)
+                perform(model.enterKeys.resolve(command))
             }
             return true
         }
@@ -296,7 +296,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             return true
         }
         guard let command else { return false }
-        perform(command)
+        perform(model.enterKeys.resolve(command))
         return true
     }
 
@@ -322,7 +322,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .paste: paste(.paste)
         case .pastePlain: paste(.paste, plainText: true)
         case .copy: paste(.copy)
-        case .pasteKeepOpen: paste(.keepOpen)
+        case .pasteKeepOpen: paste(.keepOpen, plainText: model.enterKeys.enter == .pastePlain)
+        case .copyKeepOpen: paste(.copyKeepOpen)
         case .pasteFormat(let type): paste(.paste, format: type)
         case .actions:
             if model.actionMenu == nil { openActionMenu() } else { closeActionMenu() }
@@ -395,6 +396,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         case copy
         /// ⌥↵：面板不收，⌘V 直接发给前台应用的进程。
         case keepOpen
+        /// 回车默认复制时的 ⌥↵：面板不收，只写剪切板。
+        case copyKeepOpen
     }
 
     /// 回车粘贴、⌃⌘↵ 粘贴纯文本、⌘↵ 只复制、⌥↵ 粘贴且不关闭面板、选格式粘贴。
@@ -402,7 +405,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// 没有辅助功能权限时只复制，提示一句，再弹一次系统的授权提示。
     private func paste(_ mode: PasteMode, plainText: Bool = false, format: String? = nil) {
         guard let clip = model.selectedClip else { return }
-        if mode != .keepOpen { hide() }
+        if mode == .paste || mode == .copy { hide() }
         Task {
             var note: String?
             switch await paster.write(clip, plainText: plainText, format: format) {
@@ -417,7 +420,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             case .missingFiles(let missing, _):
                 note = "有 \(missing) 个文件已经不在了"
             }
-            if mode == .copy {
+            if mode == .copy || mode == .copyKeepOpen {
                 hud.show(note.map { "已复制，\($0)" } ?? "已复制到剪切板")
             } else if paster.canPaste {
                 await paster.sendPasteKeystroke(to: mode == .keepOpen ? frontApp?.processIdentifier : nil)

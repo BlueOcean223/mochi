@@ -59,6 +59,8 @@ enum PanelCommand: Equatable {
     case paste, copy, pastePlain, pin, delete, clearAll, quickLook, revealInFinder
     /// ⌥↵：粘贴到前台应用，面板不关。
     case pasteKeepOpen
+    /// 回车默认复制时的 ⌥↵：复制，面板不关。
+    case copyKeepOpen
     /// ⌘O：链接用浏览器打开，文件打开「用其他应用打开」子菜单。
     case open
     /// ⌥⌘↑、⌥⌘↓：在置顶的里面挪一位。
@@ -77,6 +79,34 @@ enum PanelCommand: Equatable {
     case openAccessibilitySettings
     /// ⌘,：收起面板，打开设置窗口。
     case settings
+}
+
+/// 回车这几个组合各做什么，跟着设置变（照 Raycast）：回车默认复制时 ↵ 和 ⌘↵ 对调、⌥↵ 变成复制且不关闭面板；
+/// 优先粘贴纯文本时粘贴写纯文本、⌃⌘↵ 变成带格式粘贴（只对文本条目，图片、文件照常）。
+struct EnterKeys {
+    let enter: PanelCommand
+    let commandEnter: PanelCommand
+    let optionEnter: PanelCommand
+    let controlCommandEnter: PanelCommand
+
+    init(action: EnterAction, plainFirst: Bool) {
+        let paste: PanelCommand = plainFirst ? .pastePlain : .paste
+        enter = action == .copy ? .copy : paste
+        commandEnter = action == .copy ? paste : .copy
+        optionEnter = action == .copy ? .copyKeepOpen : .pasteKeepOpen
+        controlCommandEnter = plainFirst ? .paste : .pastePlain
+    }
+
+    /// 按键表（PanelCommand(event)）按默认设置写的：↵ 是 .paste、⌘↵ 是 .copy、⌥↵ 是 .pasteKeepOpen、⌃⌘↵ 是 .pastePlain。
+    func resolve(_ command: PanelCommand) -> PanelCommand {
+        switch command {
+        case .paste: enter
+        case .copy: commandEnter
+        case .pasteKeepOpen: optionEnter
+        case .pastePlain: controlCommandEnter
+        default: command
+        }
+    }
 }
 
 /// 清空前的确认。
@@ -123,7 +153,38 @@ final class PanelModel {
     private(set) var canPaste = true
     /// 呼出面板时前台应用的图标，操作面板里粘贴那几行用。
     private(set) var frontAppIcon: NSImage?
-    /// 清空前的确认。
+    /// 设置里回车做什么、是否优先粘贴纯文本，呼出时读一次。
+    private(set) var enterAction = EnterAction.paste
+    private(set) var prefersPlainText = false
+    /// 回车这几个组合各做什么，跟着设置变（照 Raycast）：回车默认复制时 ↵ 和 ⌘↵ 对调、⌥↵ 变成复制且不关闭面板；
+/// 优先粘贴纯文本时粘贴写纯文本、⌃⌘↵ 变成带格式粘贴（只对文本条目，图片、文件照常）。
+struct EnterKeys {
+    let enter: PanelCommand
+    let commandEnter: PanelCommand
+    let optionEnter: PanelCommand
+    let controlCommandEnter: PanelCommand
+
+    init(action: EnterAction, plainFirst: Bool) {
+        let paste: PanelCommand = plainFirst ? .pastePlain : .paste
+        enter = action == .copy ? .copy : paste
+        commandEnter = action == .copy ? paste : .copy
+        optionEnter = action == .copy ? .copyKeepOpen : .pasteKeepOpen
+        controlCommandEnter = plainFirst ? .paste : .pastePlain
+    }
+
+    /// 按键表（PanelCommand(event)）按默认设置写的：↵ 是 .paste、⌘↵ 是 .copy、⌥↵ 是 .pasteKeepOpen、⌃⌘↵ 是 .pastePlain。
+    func resolve(_ command: PanelCommand) -> PanelCommand {
+        switch command {
+        case .paste: enter
+        case .copy: commandEnter
+        case .pasteKeepOpen: optionEnter
+        case .pastePlain: controlCommandEnter
+        default: command
+        }
+    }
+}
+
+/// 清空前的确认。
     private(set) var clearConfirmation: ClearRequest?
     /// ⌘K 操作面板，开着时不是 nil。
     var actionMenu: ActionMenu?
@@ -166,6 +227,11 @@ final class PanelModel {
         Self.kindOptions.first { $0.kind == kind }?.label ?? "全部类型"
     }
 
+    /// 选中这条时回车这几个组合做什么。优先纯文本只管文本条目。
+    var enterKeys: EnterKeys {
+        EnterKeys(action: enterAction, plainFirst: prefersPlainText && selectedClip?.kind == .text)
+    }
+
     var isFiltered: Bool {
         !query.isEmpty || kind != nil
     }
@@ -188,7 +254,10 @@ final class PanelModel {
     // MARK: - 打开、搜索、筛选
 
     /// 每次呼出前调：清空搜索词和类型，读第一页，选中第一条。
-    func prepare(isPaused: Bool, frontAppName: String?, frontAppIcon: NSImage?, canPaste: Bool) async {
+    func prepare(isPaused: Bool, frontAppName: String?, frontAppIcon: NSImage?, canPaste: Bool,
+                 enterAction: EnterAction, prefersPlainText: Bool) async {
+        self.enterAction = enterAction
+        self.prefersPlainText = prefersPlainText
         self.isPaused = isPaused
         self.frontAppName = frontAppName
         self.frontAppIcon = frontAppIcon

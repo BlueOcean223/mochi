@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 设置窗口里的内容：呼出快捷键、保留时长、开机启动、辅助功能权限、忽略的应用。样子照 Raycast。
+/// 设置窗口里的内容：呼出快捷键、保留时长、开机启动、回车做什么、辅助功能权限、忽略的应用。样子照 Raycast。
 struct SettingsView: View {
     @Bindable var model: SettingsModel
 
@@ -37,6 +37,20 @@ struct SettingsView: View {
                         Text("还要在系统设置里允许")
                         Text("系统设置 › 通用 › 登录项与扩展，打开 Mochi")
                     }
+                }
+            }
+
+            Section {
+                Picker(selection: $model.enterAction) {
+                    Text("粘贴到前台应用").tag(EnterAction.paste)
+                    Text("复制到剪切板").tag(EnterAction.copy)
+                } label: {
+                    Text("回车")
+                    Text(model.enterAction == .paste ? "⌘↵ 复制，⌥↵ 粘贴且不关闭面板" : "⌘↵ 粘贴，⌥↵ 复制且不关闭面板")
+                }
+                Toggle(isOn: $model.prefersPlainText) {
+                    Text("优先粘贴纯文本")
+                    Text("粘贴文本时去掉网页、文档带的格式；要带格式时按 ⌃⌘↵")
                 }
             }
 

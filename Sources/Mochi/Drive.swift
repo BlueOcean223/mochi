@@ -33,6 +33,8 @@ import UniformTypeIdentifiers
 ///     tint 0.64               浅色外观下毛玻璃上那层白的浓度（试样子用）
 ///     shot-backdrop 名字      把面板连同 backdrop 一起截（ScreenCaptureKit，只合成这两个窗口），毛玻璃透出背后那块灰
 ///     shot-all 名字           把 Mochi 自己在屏幕上的窗口合成一张（看 Quick Look 开关的过渡）
+///     enter-action copy       设置里回车默认做什么（copy、paste），下次呼出生效
+///     plain-first on          设置里「优先粘贴纯文本」（on、off）
 ///     slow 10                 Quick Look 的动画放慢 10 倍，好逐帧截图；slow 1 恢复
 ///     hit 300 30              面板里这一点（左上角原点）上接鼠标的视图
 ///     click 300 30            在应用里造一次左键点击交给面板（不动真鼠标）；rightclick 是右键。SwiftUI 的按钮、点按不认
@@ -143,6 +145,8 @@ final class Drive {
         case "trusted": paster.pretendsTrusted = true
         case "backdrop": setBackdrop(Int(argument))
         case "slow": QuickLook.slowdown = Double(argument) ?? 1
+        case "enter-action": settings.enterAction = argument == "copy" ? .copy : .paste
+        case "plain-first": settings.prefersPlainText = argument == "on"
         case "hit": printHit(argument)
         case "click", "rightclick": await click(argument, right: command == "rightclick")
         case "menu": printActionMenu()

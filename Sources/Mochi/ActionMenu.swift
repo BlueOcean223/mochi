@@ -52,9 +52,19 @@ struct ActionMenu {
         didSet { highlighted = 0 }
     }
     var highlighted = 0
+    /// 上一次认的鼠标位置（屏幕坐标）。行滑到不动的指针下面（刚打开、按键滚动）也会报悬停，指针没动过就不算。
+    private var pointer = NSEvent.mouseLocation
 
     init(_ root: Level) {
         levels = [root]
+    }
+
+    /// 鼠标停到第 `index` 行上。指针真的动过才跟着高亮（Raycast、Tinycast 都这样）。
+    mutating func hover(_ index: Int) {
+        let location = NSEvent.mouseLocation
+        guard location != pointer else { return }
+        pointer = location
+        highlighted = index
     }
 
     var level: Level { levels[levels.count - 1] }
@@ -121,17 +131,14 @@ extension PanelModel {
     }
 
     private func rootActions(for clip: Clip, formats: [String]) -> [PanelAction] {
-        let app: PanelAction.Icon = frontAppIcon.map { .image($0) } ?? .symbol("arrow.down.doc")
-        var actions: [PanelAction] = [
-            PanelAction(title: frontAppName.map { "粘贴到 \($0)" } ?? "粘贴", icon: app, shortcut: "↵", command: .paste),
-            PanelAction(title: "复制", icon: .symbol("doc.on.doc"), shortcut: "⌘↵", command: .copy),
-            PanelAction(title: "粘贴且不关闭面板", icon: app, shortcut: "⌥↵", command: .pasteKeepOpen),
-        ]
+        // 顺序照 Raycast：↵、⌘↵、⌥↵、⌥⌘↵、⌃⌘↵。每个组合做什么跟着设置变（EnterKeys）。
+        let keys = enterKeys
+        var actions = [pasteAction(keys.enter, "↵"), pasteAction(keys.commandEnter, "⌘↵"), pasteAction(keys.optionEnter, "⌥↵")]
         if !formats.isEmpty {
             actions.append(PanelAction(title: "选格式粘贴…", icon: .symbol("doc.richtext"), shortcut: "⌥⌘↵", command: .submenu(.pasteAs)))
         }
         if clip.kind == .text || clip.kind == .file {
-            actions.append(PanelAction(title: "粘贴为纯文本", icon: .symbol("doc.plaintext"), shortcut: "⌃⌘↵", command: .pastePlain))
+            actions.append(pasteAction(keys.controlCommandEnter, "⌃⌘↵"))
         }
 
         var manage: [PanelAction] = []
@@ -165,6 +172,19 @@ extension PanelModel {
             PanelAction(title: clearTitle, icon: .symbol("xmark.bin"), shortcut: "⌃⇧X", isDestructive: true, command: .clearAll),
         ]
         return actions + manage.map { $0.inGroup(1) } + delete.map { $0.inGroup(2) }
+    }
+
+    /// 粘贴、复制那几行。粘贴类的图标是前台应用的。
+    private func pasteAction(_ command: PanelCommand, _ shortcut: String) -> PanelAction {
+        let app: PanelAction.Icon = frontAppIcon.map { .image($0) } ?? .symbol("arrow.down.doc")
+        let pasteTo = frontAppName.map { "粘贴到 \($0)" } ?? "粘贴"
+        return switch command {
+        case .paste: PanelAction(title: enterKeys.enter == .pastePlain ? "带格式粘贴" : pasteTo, icon: app, shortcut: shortcut, command: command)
+        case .pastePlain: PanelAction(title: "粘贴为纯文本", icon: app, shortcut: shortcut, command: command)
+        case .pasteKeepOpen: PanelAction(title: "粘贴且不关闭面板", icon: app, shortcut: shortcut, command: command)
+        case .copyKeepOpen: PanelAction(title: "复制且不关闭面板", icon: .symbol("doc.on.doc"), shortcut: shortcut, command: command)
+        default: PanelAction(title: "复制", icon: .symbol("doc.on.doc"), shortcut: shortcut, command: .copy)
+        }
     }
 
     private func submenuLevel(_ submenu: ActionSubmenu, for clip: Clip, formats: [String]) -> ActionMenu.Level? {

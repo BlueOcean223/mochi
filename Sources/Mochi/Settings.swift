@@ -16,6 +16,14 @@ enum Retention: Int, CaseIterable {
     }
 }
 
+/// 回车默认做什么（Raycast 剪切板命令的 Primary Action）。
+enum EnterAction: String, CaseIterable {
+    /// 粘贴到前台应用；⌘↵ 复制。
+    case paste
+    /// 复制到剪切板；⌘↵ 粘贴。
+    case copy
+}
+
 /// 用户设置，存在 UserDefaults 里。设置窗口和菜单栏的「暂停记录」会改它。
 @MainActor
 final class Settings {
@@ -56,6 +64,17 @@ final class Settings {
         }
     }
 
+    var enterAction: EnterAction {
+        get { defaults.string(forKey: Key.enterAction).flatMap(EnterAction.init) ?? .paste }
+        set { defaults.set(newValue.rawValue, forKey: Key.enterAction) }
+    }
+
+    /// 文本粘贴时只写纯文本，⌃⌘↵ 才带格式（Raycast 的 Prefer pasting as plain text）。
+    var prefersPlainText: Bool {
+        get { defaults.bool(forKey: Key.prefersPlainText) }
+        set { defaults.set(newValue, forKey: Key.prefersPlainText) }
+    }
+
     /// 这些应用在前台时复制的不记，按 bundle id。
     var ignoredApps: Set<String> {
         get { Set(defaults.stringArray(forKey: Key.ignoredApps) ?? []) }
@@ -88,5 +107,7 @@ final class Settings {
         static let hotKeyCode = "hotKeyCode"
         static let hotKeyModifiers = "hotKeyModifiers"
         static let panelOffsets = "panelOffsets"
+        static let enterAction = "enterAction"
+        static let prefersPlainText = "prefersPlainText"
     }
 }

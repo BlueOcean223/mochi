@@ -147,6 +147,12 @@ final class SettingsModel {
     private(set) var shortcutProblem: String?
     private(set) var retention: Retention
     var retentionChange: RetentionChange?
+    var enterAction: EnterAction {
+        didSet { settings.enterAction = enterAction }
+    }
+    var prefersPlainText: Bool {
+        didSet { settings.prefersPlainText = prefersPlainText }
+    }
     private(set) var loginItem = LoginItem.off
     private(set) var loginProblem: String?
     private(set) var ignoredApps: [IgnoredApp] = []
@@ -177,11 +183,15 @@ final class SettingsModel {
         self.paster = paster
         shortcut = settings.shortcut
         retention = settings.retention
+        enterAction = settings.enterAction
+        prefersPlainText = settings.prefersPlainText
     }
 
     func refresh() {
         shortcut = settings.shortcut
         retention = settings.retention
+        enterAction = settings.enterAction
+        prefersPlainText = settings.prefersPlainText
         refreshTrust()
         refreshLoginItem()
         loadIgnoredApps()

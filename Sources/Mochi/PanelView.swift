@@ -635,9 +635,11 @@ private struct Footer: View {
             if model.selectedClip != nil {
                 // 照 Raycast：右边是回车做的事和「操作 ⌘K」，复制等别的操作在 ⌘K 里。操作面板开着时它盖在这里，这颗胶囊淡出。
                 HStack(spacing: 2) {
-                    if model.canPaste {
-                        FooterButton(title: model.frontAppName.map { "粘贴到 \($0)" } ?? "粘贴", key: "↵", isPrimary: true) {
-                            model.perform?(.paste)
+                    let enter = model.enterKeys.enter
+                    if model.canPaste, enter != .copy {
+                        FooterButton(title: enter == .pastePlain ? "粘贴为纯文本" : model.frontAppName.map { "粘贴到 \($0)" } ?? "粘贴",
+                                     key: "↵", isPrimary: true) {
+                            model.perform?(enter)
                         }
                     } else {
                         FooterButton(title: "复制", key: "↵", isPrimary: true) { model.perform?(.copy) }
@@ -660,7 +662,9 @@ private struct Footer: View {
     private func actions(for clip: Clip) -> [(title: String, key: String, command: PanelCommand)] {
         var actions = [(title: clip.isPinned ? "取消置顶" : "置顶", key: "⌘.", command: PanelCommand.pin)]
         switch clip.kind {
-        case .text: actions.append(clip.isLink ? ("打开链接", "⌘O", .open) : ("粘贴为纯文本", "⌃⌘↵", .pastePlain))
+        case .text:
+            let plainFirst = model.enterKeys.controlCommandEnter == .paste
+            actions.append(clip.isLink ? ("打开链接", "⌘O", .open) : plainFirst ? ("带格式粘贴", "⌃⌘↵", .paste) : ("粘贴为纯文本", "⌃⌘↵", .pastePlain))
         case .image: actions.append(("Quick Look", "⌘Y", .quickLook))
         case .file: actions += [("Quick Look", "⌘Y", .quickLook), ("在 Finder 中显示", "⇧⌘O", .revealInFinder)]
         }
