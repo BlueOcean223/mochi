@@ -205,7 +205,13 @@ private struct ClipList: View {
                 }
             }
             .onChange(of: model.scrollToTop) {
-                proxy.scrollTo(Row.ID.top, anchor: .top)
+                // 置顶的超过 3 条时，选中的第一条不置顶的可能在下面看不到，滚到中间，上面还露着几条置顶的（照 Raycast）。
+                if let id = model.selectedID, model.clips.prefix(while: \.isPinned).count > 3,
+                   model.clips.first(where: { !$0.isPinned })?.id == id {
+                    proxy.scrollTo(Row.ID.clip(id), anchor: .center)
+                } else {
+                    proxy.scrollTo(Row.ID.top, anchor: .top)
+                }
             }
             .onChange(of: model.scrollToSelection) {
                 guard let id = model.selectedID else { return }

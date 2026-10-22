@@ -187,7 +187,8 @@ final class PanelModel {
             hasMore = page.count == Self.pageSize
             regroup()
             if !(keepSelection && clips.contains { $0.id == selectedID }) {
-                select(clips.first?.id)
+                // 没有搜索词时选中最新的一条不置顶的，回车粘贴的是刚复制的那条（Raycast、Tinycast 都这样）。
+                select((query.isEmpty ? clips.first { !$0.isPinned } : nil)?.id ?? clips.first?.id)
             }
         } catch {
             log.error("list failed: \(error, privacy: .public)")
