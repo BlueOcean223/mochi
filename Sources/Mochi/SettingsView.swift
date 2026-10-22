@@ -169,14 +169,23 @@ private struct UpdateRow: View {
         case .upToDate where updater.latest == nil: Text("已经是最新版本")
         default:
             if let latest = updater.latest {
-                // 字符串先拼好再交给 LocalizedStringKey，Markdown 的链接才认。
-                Text(LocalizedStringKey("新版本已发布，[看看改了什么](\(latest.pageURL.absoluteString))"))
+                Text(Self.notesLink(latest.pageURL))
             } else if let checked = updater.lastChecked {
                 Text(verbatim: "上次检查：\(Formatting.copiedAt(checked))")
             } else {
                 Text("还没检查过")
             }
         }
+    }
+
+    /// 链接直接设在 AttributedString 上。不用 `LocalizedStringKey("…[看看改了什么](\(url))")`：字面量里的插值
+    /// 变成格式参数，Markdown 解析的是 `(%@)`，点了交给系统的网址是 `%@`，系统报 -50。
+    private static func notesLink(_ url: URL) -> AttributedString {
+        var text = AttributedString("新版本已发布，")
+        var link = AttributedString("看看改了什么")
+        link.link = url
+        text.append(link)
+        return text
     }
 }
 
