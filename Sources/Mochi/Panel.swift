@@ -353,7 +353,7 @@ private extension NSView {
     }
 }
 
-private extension NSImage {
+extension NSImage {
     /// NSVisualEffectView 的圆角遮罩：九宫格拉伸，四个角是圆的。
     static func roundedRectMask(radius: CGFloat) -> NSImage {
         let edge = radius * 2 + 1

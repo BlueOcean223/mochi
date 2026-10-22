@@ -12,6 +12,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var previousApp: NSRunningApplication?
     private var keyMonitor: Any?
+    private var trustTimer: Timer?
 
     /// 调试脚本在跑（`Drive`）：窗口压在桌面壁纸下面，不激活、不接鼠标；开机启动、系统设置都不真的动。
     var isQuiet = false {
@@ -21,11 +22,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     init(model: SettingsModel) {
         self.model = model
         super.init()
-        // 录快捷键时窗口收到的按键都给录制，不派给按钮、开关，也不触发菜单里的 ⌘W、⌘Q。
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
-            guard let self, self.model.isRecording, let window = self.window, event.window === window else { return event }
-            self.model.handleRecording(event)
-            return nil
+            guard let self, let window = self.window else { return event }
+            // 录快捷键时窗口收到的按键都给录制，不派给按钮、开关，也不触发菜单里的 ⌘W、⌘Q。
+            if self.model.isRecording, event.window === window {
+                self.model.handleRecording(event)
+                return nil
+            }
+            // 加应用的弹层是另一个窗口。输入法正在拼字时方向键、回车是给输入法的。
+            if self.model.isPickingApp, event.type == .keyDown, event.window !== window,
+               (event.window?.firstResponder as? NSTextView)?.hasMarkedText() != true,
+               self.model.handlePickerKey(event) {
+                return nil
+            }
+            return event
         }
     }
 
@@ -44,6 +54,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if !NSApp.isActive { previousApp = NSWorkspace.shared.frontmostApplication }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        // 去系统设置授权回来，窗口不一定被点过、不一定成为 key，开着时每秒看一眼。
+        if trustTimer == nil {
+            trustTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.model.refreshTrust() }
+            }
+        }
     }
 
     func close() {
@@ -54,7 +70,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let hosting = NSHostingController(rootView: SettingsView(model: model))
         hosting.sizingOptions = [.preferredContentSize]
         let window = NSWindow(contentViewController: hosting)
+        // 标题栏只留红绿灯，同 Raycast（decisions.md 第 22 条）。标题还在，调度中心、辅助功能读得到。
+        // 不用 .fullSizeContentView：内容伸到标题栏下面以后安全区跟着窗口高度变，窗口又跟着内容高度变，
+        // AppKit 会无限重排、抛异常。标题栏和表单底色本来就一样，不伸进去看起来也一样。
         window.styleMask = [.titled, .closable]
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.titlebarSeparatorStyle = .none
         window.title = "Mochi 设置"
         window.isReleasedWhenClosed = false
         // 在别的桌面上开着时，点「设置…」把它挪到当前桌面，不跳过去。
@@ -76,6 +98,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         model.stopRecording()
+        model.isPickingApp = false
+        trustTimer?.invalidate()
+        trustTimer = nil
         // 菜单栏应用关掉最后一个窗口后系统不会把前台交回去，键盘就没地方去了。
         if NSApp.isActive, let previousApp, !previousApp.isTerminated {
             previousApp.activate()
@@ -102,16 +127,39 @@ final class SettingsModel {
 
     enum LoginItem { case off, on, needsApproval }
 
+    /// 加应用弹层里的一行：一个应用，或者最后那行「在其他位置找…」。
+    enum PickerRow: Identifiable {
+        case app(InstalledApp)
+        case other
+
+        var id: String {
+            switch self {
+            case .app(let app): app.id
+            case .other: "\u{0}other"
+            }
+        }
+    }
+
     private(set) var shortcut: Shortcut
     private(set) var isRecording = false
-    /// 录快捷键时已经按住的修饰键，比如「⌃⌘」。
-    private(set) var heldModifiers = ""
+    /// 录快捷键时已经按住的修饰键，比如 ⌃、⌘。
+    private(set) var heldModifiers: [String] = []
     private(set) var shortcutProblem: String?
     private(set) var retention: Retention
     var retentionChange: RetentionChange?
     private(set) var loginItem = LoginItem.off
     private(set) var loginProblem: String?
     private(set) var ignoredApps: [IgnoredApp] = []
+    /// 鼠标停在哪个忽略的应用上，那一行出现移除按钮。
+    var hoveredApp: String?
+    var isPickingApp = false
+    var pickerQuery = "" {
+        didSet { pickerIndex = 0 }
+    }
+    var pickerIndex = 0
+    /// 选 .app 的系统窗口（「在其他位置找…」）。
+    var isChoosingFile = false
+    private var installedApps: [InstalledApp] = []
     private(set) var isTrusted = false
 
     @ObservationIgnored var isQuiet = false
@@ -134,7 +182,7 @@ final class SettingsModel {
     func refresh() {
         shortcut = settings.shortcut
         retention = settings.retention
-        isTrusted = paster.canPaste
+        refreshTrust()
         refreshLoginItem()
         loadIgnoredApps()
         if !isRecording {
@@ -148,14 +196,14 @@ final class SettingsModel {
         guard !isRecording else { return }
         hotKey.suspend()
         isRecording = true
-        heldModifiers = ""
+        heldModifiers = []
         shortcutProblem = nil
     }
 
     func stopRecording() {
         guard isRecording else { return }
         isRecording = false
-        heldModifiers = ""
+        heldModifiers = []
         hotKey.register()
         shortcutProblem = hotKey.isRegistered ? nil : "现在没生效，换一个试试"
     }
@@ -177,7 +225,7 @@ final class SettingsModel {
                 shortcutProblem = "\(new.description) 是系统快捷键，换一个"
             } else {
                 isRecording = false
-                heldModifiers = ""
+                heldModifiers = []
                 if hotKey.change(to: new) {
                     shortcut = new
                     shortcutProblem = nil
@@ -267,7 +315,55 @@ final class SettingsModel {
 
     func stopIgnoring(_ id: String) {
         settings.ignoredApps.remove(id)
+        if hoveredApp == id { hoveredApp = nil }
         loadIgnoredApps()
+    }
+
+    /// 已经忽略的不列；筛中文名和文件名。最后总有一行「在其他位置找…」。
+    var pickerRows: [PickerRow] {
+        let query = pickerQuery.trimmingCharacters(in: .whitespaces)
+        let apps = installedApps.filter { app in
+            !settings.ignoredApps.contains(app.id)
+                && (query.isEmpty || app.name.localizedCaseInsensitiveContains(query) || app.fileName.localizedCaseInsensitiveContains(query))
+        }
+        return apps.map(PickerRow.app) + [.other]
+    }
+
+    /// 先用上次读到的列表，后台重读一遍（可能刚装了新应用）。
+    func openAppPicker() {
+        pickerQuery = ""
+        isPickingApp = true
+        Task {
+            installedApps = await InstalledApps.load()
+        }
+    }
+
+    func choosePickerRow(at index: Int) {
+        let rows = pickerRows
+        guard rows.indices.contains(index) else { return }
+        isPickingApp = false
+        switch rows[index] {
+        case .app(let app):
+            settings.ignoredApps.insert(app.id)
+            loadIgnoredApps()
+        case .other:
+            // 等弹层收起来再弹选文件的窗口。
+            Task { isChoosingFile = true }
+        }
+    }
+
+    /// 弹层开着时的 ↑↓、回车、Esc；别的键照常进搜索框。
+    func handlePickerKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
+        let count = pickerRows.count
+        switch Int(event.keyCode) {
+        case kVK_DownArrow: pickerIndex = min(pickerIndex + 1, count - 1)
+        case kVK_UpArrow: pickerIndex = max(min(pickerIndex, count - 1) - 1, 0)
+        case kVK_Return, kVK_ANSI_KeypadEnter: choosePickerRow(at: min(pickerIndex, count - 1))
+        case kVK_Escape: isPickingApp = false
+        default: return false
+        }
+        return true
     }
 
     /// 卸载了的应用还留在列表里，显示 bundle id。
@@ -283,6 +379,11 @@ final class SettingsModel {
     }
 
     // MARK: - 辅助功能
+
+    func refreshTrust() {
+        let trusted = paster.canPaste
+        if trusted != isTrusted { isTrusted = trusted }
+    }
 
     func openAccessibilitySettings() {
         guard !isQuiet else { return }

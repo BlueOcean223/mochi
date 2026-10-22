@@ -58,11 +58,14 @@ struct Shortcut: Equatable {
     // MARK: - 显示
 
     /// 修饰键的顺序和系统菜单一样：⌃⌥⇧⌘。
-    var description: String { Self.symbols(modifiers) + keyName }
+    var description: String { keys.joined() }
 
-    static func symbols(_ modifiers: Int) -> String {
+    /// 一个键一项，设置窗口里画成一个个键帽。
+    var keys: [String] { Self.symbols(modifiers) + [keyName] }
+
+    static func symbols(_ modifiers: Int) -> [String] {
         [(controlKey, "⌃"), (optionKey, "⌥"), (shiftKey, "⇧"), (cmdKey, "⌘")]
-            .filter { modifiers & $0.0 != 0 }.map(\.1).joined()
+            .filter { modifiers & $0.0 != 0 }.map(\.1)
     }
 
     /// 字母、数字、符号键按当前键盘布局翻成字符（法语键盘上 kVK_ANSI_Q 那个键是 A），别的键查表。

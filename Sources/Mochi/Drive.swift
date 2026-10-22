@@ -4,6 +4,7 @@ import Carbon.HIToolbox
 import CoreGraphics
 import ImageIO
 import MochiCore
+import SwiftUI
 import UniformTypeIdentifiers
 
 /// 调试构建里按脚本操作面板、截图，不碰真实的鼠标键盘、不抢用户的键盘（notes/dev-env.md「测界面」）。
@@ -29,7 +30,11 @@ import UniformTypeIdentifiers
 ///     settings                打开设置窗口（也压在桌面下面）
 ///     settings-close
 ///     record                  开始录呼出快捷键
-///     press ctrl-alt-k        录快捷键时按键，写法同 key；只写修饰键（ctrl-cmd）是按住修饰键
+///     press ctrl-alt-k        录快捷键时按键，写法同 key；只写修饰键（ctrl-cmd）是按住修饰键。加应用的弹层开着时给弹层
+///     pick                    点「忽略的应用」的 +。弹层（NSPopover）压不到桌面下面，脚本里把弹层的内容放进一个压在桌面下的窗口
+///     pick-type 微            在弹层的搜索框里打字
+///     shot-picker 名字        截弹层
+///     hover bundle-id         鼠标停在这个忽略的应用上（出现移除按钮）；hover 不带参数是移开
 ///     retention 7             选保留时长（天数，0 是永久），要删记录时会弹确认
 ///     retention-confirm       确认框里点「删掉」；retention-cancel 点「取消」
 ///     ignore /路径/某个.app    加进忽略的应用；unignore bundle-id 移除
@@ -43,6 +48,7 @@ final class Drive {
     private let settingsWindow: SettingsWindowController
     private let pasteboard: NSPasteboard
     private let shots: URL
+    private var pickerWindow: NSWindow?
 
     nonisolated static var isRequested: Bool { ProcessInfo.processInfo.environment["MOCHI_DRIVE"] != nil }
 
@@ -96,8 +102,21 @@ final class Drive {
             case "record": settings.startRecording()
             case "press":
                 if let event = event(argument, window: settingsWindow.windowNumber ?? 0) {
-                    settings.isRecording ? settings.handleRecording(event) : print("drive: 没在录快捷键")
+                    if settings.isRecording {
+                        settings.handleRecording(event)
+                    } else if settings.isPickingApp {
+                        if !settings.handlePickerKey(event) { print("drive: \(argument) 弹层不处理") }
+                    } else {
+                        print("drive: 没在录快捷键，弹层也没开")
+                    }
                 }
+            case "pick":
+                settings.openAppPicker()
+                showPicker()
+            case "pick-type": settings.pickerQuery = argument
+            case "shot-picker":
+                if let window = pickerWindow { await capture(window: window.windowNumber, name: argument) }
+            case "hover": settings.hoveredApp = argument.isEmpty ? nil : argument
             case "retention":
                 if let retention = Retention(rawValue: Int(argument) ?? -1) { settings.chooseRetention(retention) }
             case "retention-confirm": settings.confirmRetentionChange()
@@ -115,10 +134,39 @@ final class Drive {
             }
             // 等 SwiftUI 画完、异步读库回来。
             try? await Task.sleep(for: .milliseconds(250))
+            if !settings.isPickingApp, let window = pickerWindow {
+                window.orderOut(nil)
+                pickerWindow = nil
+            }
         }
     }
 
     private var settings: SettingsModel { settingsWindow.model }
+
+    /// 弹层的内容放进一个和弹层一样的毛玻璃圆角窗口，压在桌面下面，摆在设置窗口右边。
+    private func showPicker() {
+        let size = NSSize(width: 360, height: 320)
+        let window = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
+                             backing: .buffered, defer: false)
+        window.level = NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.ignoresMouseEvents = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
+        effect.material = .popover
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        effect.maskImage = .roundedRectMask(radius: 16)
+        let hosting = NSHostingView(rootView: AppPicker(model: settings))
+        hosting.frame = effect.bounds
+        effect.addSubview(hosting)
+        window.contentView = effect
+        let screen = NSScreen.main?.visibleFrame ?? .zero
+        window.setFrameOrigin(NSPoint(x: screen.midX + 260, y: screen.midY - size.height / 2))
+        window.orderFrontRegardless()
+        pickerWindow = window
+    }
 
     private func key(_ name: String) {
         guard let event = event(name, window: panel.windowNumber) else { return }
