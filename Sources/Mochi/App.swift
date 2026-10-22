@@ -143,7 +143,7 @@ private func pasteboard() -> NSPasteboard {
     return .general
 }
 
-/// 记下系统给的剪切板权限。macOS 15.4 起苹果预告读剪切板会弹提示（tech-selection.md 第二节），
+/// 记下系统给的剪切板权限。macOS 15.4 起苹果预告读剪切板会弹提示，
 /// 是 ask 的话每次读都可能被系统拦下来问用户，记录就不可靠了。
 private func logPasteboardAccess() {
     let name = switch NSPasteboard.general.accessBehavior {

@@ -23,7 +23,7 @@ final class Settings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        // 10-22 加「1 小时」以前保留时长按天存在 retentionDays 里，改成按小时存。
+        // 保留时长原来按天存在 retentionDays 里，放不下「1 小时」，改成按小时存；读到旧值就换算过来。
         if defaults.object(forKey: Key.retentionHours) == nil, let days = defaults.object(forKey: Key.legacyRetentionDays) as? Int {
             defaults.set(days * 24, forKey: Key.retentionHours)
             defaults.removeObject(forKey: Key.legacyRetentionDays)

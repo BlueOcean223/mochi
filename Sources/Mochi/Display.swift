@@ -21,7 +21,7 @@ extension Clip {
     }
 }
 
-/// 终端、编辑器里复制的文本，预览用等宽字体（decisions.md 第 12 条）。
+/// 终端、编辑器里复制的文本，预览用等宽字体。
 enum CodeApps {
     static let bundleIDs: Set<String> = [
         "com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty", "net.kovidgoyal.kitty",

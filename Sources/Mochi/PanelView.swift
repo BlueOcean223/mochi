@@ -2,14 +2,14 @@ import AppKit
 import MochiCore
 import SwiftUI
 
-/// 尺寸照 Raycast 2.8.2 前端包里的样式；行高、列表宽度是对着截图估的（requirements.md 第 1 条）。
+/// 尺寸照 Raycast 2.8.2 前端包里的样式；行高、列表宽度是对着截图估的。
 enum PanelMetrics {
     static let size = CGSize(width: 750, height: 475)
     static let cornerRadius: CGFloat = 26
     static let headerHeight: CGFloat = 64
     static let listWidth: CGFloat = 300
     static let rowHeight: CGFloat = 40
-    /// Raycast 是 36，用户 10-22 嫌大，改小。
+    /// 比 Raycast 的 36 小，不那么抢眼。
     static let footerHeight: CGFloat = 30
     static let footerInset: CGFloat = 8
     /// 底部操作条浮在内容上面，列表和信息区底下要让出这么多。
@@ -277,7 +277,7 @@ private struct ClipRow: View {
     }
 }
 
-/// 文本是类型图标（文本、链接），图片是缩略图，文件是文件图标（decisions.md 第 12 条）。
+/// 文本是类型图标（文本、链接），图片是缩略图，文件是文件图标。
 private struct ClipIcon: View {
     let clip: Clip
 
@@ -618,7 +618,7 @@ private struct Footer: View {
         .font(.system(size: 12))
     }
 
-    /// 当前这条能用的次要操作（decisions.md 第 12 条）。
+    /// 当前这条能用的次要操作。
     private func hints(for clip: Clip) -> [(title: String, key: String)] {
         var hints = [(title: clip.isPinned ? "取消置顶" : "置顶", key: "⌘.")]
         switch clip.kind {

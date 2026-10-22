@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 设置窗口里的内容，只有 requirements.md「设置和隐私」里列的五项。样子照 Raycast 打磨过（decisions.md 第 22 条）。
+/// 设置窗口里的内容：呼出快捷键、保留时长、开机启动、辅助功能权限、忽略的应用。样子照 Raycast。
 struct SettingsView: View {
     @Bindable var model: SettingsModel
 

@@ -44,7 +44,7 @@ struct Shortcut: Equatable {
     }
 
     /// 系统快捷键（系统设置 › 键盘 › 键盘快捷键里开着的）在用这个组合：系统先拿走，注册了也收不到。
-    /// 别的应用注册的查不到：`RegisterEventHotKey` 不拦两个应用注册同一个组合（10-22 试过）。
+    /// 别的应用注册的查不到：两个应用注册同一个组合，`RegisterEventHotKey` 都返回成功。
     var isTakenBySystem: Bool {
         var array: Unmanaged<CFArray>?
         guard CopySymbolicHotKeys(&array) == noErr, let list = array?.takeRetainedValue() as? [[String: Any]] else { return false }

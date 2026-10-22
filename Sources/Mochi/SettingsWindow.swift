@@ -70,7 +70,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let hosting = NSHostingController(rootView: SettingsView(model: model))
         hosting.sizingOptions = [.preferredContentSize]
         let window = NSWindow(contentViewController: hosting)
-        // 标题栏只留红绿灯，同 Raycast（decisions.md 第 22 条）。标题还在，调度中心、辅助功能读得到。
+        // 标题栏只留红绿灯，同 Raycast。标题还在，调度中心、辅助功能读得到。
         // 不用 .fullSizeContentView：内容伸到标题栏下面以后安全区跟着窗口高度变，窗口又跟着内容高度变，
         // AppKit 会无限重排、抛异常。标题栏和表单底色本来就一样，不伸进去看起来也一样。
         window.styleMask = [.titled, .closable]
