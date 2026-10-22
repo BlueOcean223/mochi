@@ -67,6 +67,8 @@ enum PanelCommand: Equatable {
     case movePinnedUp, movePinnedDown
     /// ⌘K：操作面板开关。
     case actions
+    /// 按住一行拖出去（拖到别的应用）。
+    case drag(Int64)
     /// ⌘1…⌘9、⌘0：对列表第 1–10 条做回车做的事；操作面板开着时执行面板里第 N 项。
     case number(Int)
     /// 打开操作面板里的子菜单（⌥⌘↵ 选格式粘贴、⇧⌘X 删除最近的）。

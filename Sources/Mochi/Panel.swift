@@ -66,6 +66,7 @@ final class ClipPanel: NSPanel {
 @MainActor
 final class PanelController: NSObject, NSWindowDelegate {
     let model: PanelModel
+    private let store: ClipStore
     private let panel = ClipPanel()
     private let settings: Settings
     private let paster: Paster
@@ -96,6 +97,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     init(store: ClipStore, settings: Settings, paster: Paster, hud: HUD) {
         model = PanelModel(store: store)
+        self.store = store
         self.settings = settings
         self.paster = paster
         self.hud = hud
@@ -350,6 +352,7 @@ final class PanelController: NSObject, NSWindowDelegate {
                 let span = minutes < 60 ? "\(minutes) 分钟" : minutes < 1440 ? "\(minutes / 60) 小时" : "\(minutes / 1440) 天"
                 hud.show(count == 0 ? "最近 \(span)没有要删的，置顶的不删" : "删掉了最近 \(span)的 \(count) 条")
             }
+        case .drag(let id): startDrag(id)
         case .number(let n):
             guard model.clips.indices.contains(n - 1) else { return }
             model.select(model.clips[n - 1].id)
@@ -388,6 +391,67 @@ final class PanelController: NSObject, NSWindowDelegate {
             guard !Task.isCancelled, let self, self.model.actionMenu == nil else { return }
             self.model.showsNumberHints = true
         }
+    }
+
+    // MARK: - 拖出去
+
+    /// 拖出去的时候不是 nil。拖动手势在拖动期间还会报变化，开一次就够。
+    private var dragging: TextProvider?
+
+    /// 开始把一行拖到别的应用：图片、文件拖出去是文件，文本是文字（长文本放下时才去读全文）。放下以后面板收起。
+    private func startDrag(_ id: Int64) {
+        guard dragging == nil, let clip = model.clips.first(where: { $0.id == id }),
+              let event = NSApp.currentEvent, event.type == .leftMouseDragged, let view = panel.contentView else { return }
+        let writers: [NSPasteboardWriting]
+        let provider = TextProvider(store: store, clip: clip)
+        switch clip.kind {
+        case .text:
+            let item = NSPasteboardItem()
+            if clip.characterCount == clip.title.count {
+                item.setString(clip.title, forType: .string)
+            } else {
+                item.setDataProvider(provider, forTypes: [.string])
+            }
+            writers = [item]
+        case .image:
+            writers = clip.imageURL.map { [$0 as NSURL] } ?? []
+        case .file:
+            writers = clip.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }.map { $0 as NSURL }
+        }
+        guard !writers.isEmpty else { return }
+        let icon = dragIcon(for: clip)
+        let location = view.convert(event.locationInWindow, from: nil)
+        let items = writers.enumerated().map { index, writer in
+            let item = NSDraggingItem(pasteboardWriter: writer)
+            let offset = CGFloat(min(index, 3)) * 4
+            item.setDraggingFrame(NSRect(x: location.x - 16 + offset, y: location.y - 16 - offset, width: 32, height: 32), contents: icon)
+            return item
+        }
+        dragging = provider
+        view.beginDraggingSession(with: items, event: event, source: self)
+    }
+
+    #if DEBUG
+    /// 调试脚本：走一遍长文本拖出去放下时取全文的路（不真的拖，拖动跟的是真鼠标）。
+    func provideDraggedText(_ id: Int64) -> String? {
+        guard let clip = model.clips.first(where: { $0.id == id }) else { return nil }
+        let item = NSPasteboardItem()
+        TextProvider(store: store, clip: clip).pasteboard(nil, item: item, provideDataForType: .string)
+        return item.string(forType: .string)
+    }
+    #endif
+
+    private func dragIcon(for clip: Clip) -> NSImage {
+        switch clip.kind {
+        case .image:
+            if let url = clip.thumbnailURL, let image = NSImage(contentsOf: url) { return image }
+        case .file:
+            if let url = clip.fileURLs.first { return NSWorkspace.shared.icon(forFile: url.path) }
+        case .text:
+            break
+        }
+        let symbol = NSImage(systemSymbolName: clip.isLink ? "link" : "text.alignleft", accessibilityDescription: nil)
+        return symbol?.withSymbolConfiguration(.init(pointSize: 24, weight: .regular)) ?? NSImage()
     }
 
     // MARK: - 操作面板
@@ -630,6 +694,45 @@ extension PanelCommand {
         guard let command else { return nil }
         self = command
     }
+}
+
+extension PanelController: NSDraggingSource {
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .outsideApplication ? .copy : []
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        dragging = nil
+        if operation != [] { hide() }
+    }
+}
+
+/// 长文本拖出去时，放下那一刻对方要文字了才读全文。读库在 ClipStore 自己的线程上，主线程在这里等它（只等这一次）；
+/// 不能经过主线程上的东西（PanelModel），不然互相等。
+private final class TextProvider: NSObject, NSPasteboardItemDataProvider {
+    private let store: ClipStore
+    private let clip: Clip
+
+    init(store: ClipStore, clip: Clip) {
+        self.store = store
+        self.clip = clip
+    }
+
+    func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+        let done = DispatchSemaphore(value: 0)
+        let box = TextBox()
+        let (store, id) = (store, clip.id)
+        Task.detached {
+            box.text = try? await store.text(of: id)
+            done.signal()
+        }
+        done.wait()
+        item.setString(box.text ?? clip.title, forType: type)
+    }
+}
+
+private final class TextBox: @unchecked Sendable {
+    var text: String?
 }
 
 private extension NSView {

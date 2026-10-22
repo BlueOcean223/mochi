@@ -36,6 +36,7 @@ import UniformTypeIdentifiers
 ///     enter-action copy       设置里回车默认做什么（copy、paste），下次呼出生效
 ///     plain-first on          设置里「优先粘贴纯文本」（on、off）
 ///     hold cmd                按住 ⌘（放进事件队列，监视器看得到）；hold 不带参数是全松开
+///     drag-text 关键词        走一遍长文本拖出去放下时取全文的路，打印拿到几个字（不真的拖）
 ///     slow 10                 Quick Look 的动画放慢 10 倍，好逐帧截图；slow 1 恢复
 ///     hit 300 30              面板里这一点（左上角原点）上接鼠标的视图
 ///     click 300 30            在应用里造一次左键点击交给面板（不动真鼠标）；rightclick 是右键。SwiftUI 的按钮、点按不认
@@ -146,6 +147,12 @@ final class Drive {
         case "trusted": paster.pretendsTrusted = true
         case "backdrop": setBackdrop(Int(argument))
         case "slow": QuickLook.slowdown = Double(argument) ?? 1
+        case "drag-text":
+            if let clip = panel.model.clips.first(where: { $0.title.contains(argument) }) {
+                let started = ContinuousClock.now
+                let text = panel.provideDraggedText(clip.id) ?? ""
+                print("drive: 拖出去的文字 \(text.count) 个字（标题 \(clip.title.count) 个），用了 \((ContinuousClock.now - started).milliseconds) ms")
+            }
         case "hold":
             // 按住、松开修饰键：放进事件队列，面板的事件监视器和真按键一样看得到。hold 不带参数是全松开。
             if let event = event(argument.isEmpty ? "" : argument, window: panel.windowNumber) ?? flagsEvent([]) {

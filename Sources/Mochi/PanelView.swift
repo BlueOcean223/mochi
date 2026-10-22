@@ -198,6 +198,7 @@ private struct ClipList: View {
                                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.rowFrames[clip.id] = $0 }
                                 .onDisappear { model.rowFrames[clip.id] = nil }
                                 .onTapGesture { model.select(clip.id) }
+                                .gesture(DragGesture(minimumDistance: 4).onChanged { _ in model.perform?(.drag(clip.id)) })
                                 .simultaneousGesture(TapGesture(count: 2).onEnded { model.perform?(.paste) })
                                 .onAppear { model.rowAppeared(clip) }
                         }
