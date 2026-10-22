@@ -7,16 +7,20 @@ final class StatusMenu: NSObject {
     private let settings: Settings
     private let pauseItem = NSMenuItem(title: "", action: #selector(togglePause), keyEquivalent: "")
     private let openItem = NSMenuItem(title: "打开剪切板历史", action: #selector(open), keyEquivalent: "")
+    private let updateItem = NSMenuItem(title: "", action: #selector(update), keyEquivalent: "")
+    private let updateSeparator = NSMenuItem.separator()
     private let openPanel: () -> Void
     private let openSettings: () -> Void
     private let resetPanelPosition: () -> Void
+    private let installUpdate: () -> Void
 
     init(settings: Settings, openPanel: @escaping () -> Void, openSettings: @escaping () -> Void,
-         resetPanelPosition: @escaping () -> Void) {
+         resetPanelPosition: @escaping () -> Void, installUpdate: @escaping () -> Void) {
         self.settings = settings
         self.openPanel = openPanel
         self.openSettings = openSettings
         self.resetPanelPosition = resetPanelPosition
+        self.installUpdate = installUpdate
         super.init()
         let image = NSImage(systemSymbolName: "list.clipboard", accessibilityDescription: "Mochi")
         image?.isTemplate = true
@@ -24,6 +28,10 @@ final class StatusMenu: NSObject {
 
         let menu = NSMenu()
         menu.autoenablesItems = false
+        updateItem.target = self
+        menu.addItem(updateItem)
+        menu.addItem(updateSeparator)
+        showUpdate(nil)
         openItem.target = self
         menu.addItem(openItem)
         showShortcut(settings.shortcut)
@@ -46,6 +54,17 @@ final class StatusMenu: NSObject {
     func showShortcut(_ shortcut: Shortcut) {
         openItem.keyEquivalent = shortcut.menuKeyEquivalent
         openItem.keyEquivalentModifierMask = shortcut.modifierFlags
+    }
+
+    /// 有新版本时菜单最上面多一项「更新到 …」。
+    func showUpdate(_ version: String?) {
+        updateItem.title = version.map { "更新到 \($0)" } ?? ""
+        updateItem.isHidden = version == nil
+        updateSeparator.isHidden = version == nil
+    }
+
+    @objc private func update() {
+        installUpdate()
     }
 
     @objc private func open() {

@@ -41,6 +41,7 @@ final class Settings {
             Key.hotKeyCode: Shortcut.standard.keyCode,
             Key.hotKeyModifiers: Shortcut.standard.modifiers,
             Key.sequenceAddsNewline: true,
+            Key.checksForUpdates: true,
             // 钥匙串访问、系统的「密码」应用：它们多半会打密码标记，这里再兜一层。
             Key.ignoredApps: ["com.apple.keychainaccess", "com.apple.Passwords"],
         ])
@@ -86,6 +87,18 @@ final class Settings {
     var sequenceAddsNewline: Bool {
         get { defaults.bool(forKey: Key.sequenceAddsNewline) }
         set { defaults.set(newValue, forKey: Key.sequenceAddsNewline) }
+    }
+
+    /// 每天问一次 GitHub 有没有新版本。
+    var checksForUpdates: Bool {
+        get { defaults.bool(forKey: Key.checksForUpdates) }
+        set { defaults.set(newValue, forKey: Key.checksForUpdates) }
+    }
+
+    /// 上次查成功（拿到了 GitHub 的回答）的时间。
+    var lastUpdateCheck: Date? {
+        get { defaults.object(forKey: Key.lastUpdateCheck) as? Date }
+        set { defaults.set(newValue, forKey: Key.lastUpdateCheck) }
     }
 
     var enterAction: EnterAction {
@@ -136,5 +149,7 @@ final class Settings {
         static let sequenceKeyCode = "sequenceKeyCode"
         static let sequenceModifiers = "sequenceModifiers"
         static let sequenceAddsNewline = "sequenceAddsNewline"
+        static let checksForUpdates = "checksForUpdates"
+        static let lastUpdateCheck = "lastUpdateCheck"
     }
 }

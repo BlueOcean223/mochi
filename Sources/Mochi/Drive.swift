@@ -52,6 +52,10 @@ import UniformTypeIdentifiers
 ///     clear-sequence          清掉按顺序粘贴的快捷键（设置里的 ⓧ）
 ///     sequence                按一下按顺序粘贴的快捷键（不发 ⌘V，用 clipboard 看写了什么）
 ///     newline on|off          设置里「粘贴文本后换行」
+///     update check            点「检查更新」，打印结果。要设 MOCHI_UPDATE_FEED（本地的 JSON，格式同 GitHub 的
+///                             releases/latest，附件地址可以是 file://），不然真的去问 GitHub
+///     update install          点「更新到 …」：下载、核对、替换，不重启
+///     update auto-off         关掉「自动检查更新」；update 不带参数只打印状态
 ///     press ctrl-alt-k        录快捷键时按键，写法同 key；只写修饰键（ctrl-cmd）是按住修饰键。加应用的弹层开着时给弹层
 ///     pick                    点「忽略的应用」的 +。弹层（NSPopover）压不到桌面下面，脚本里把弹层的内容放进一个压在桌面下的窗口
 ///     pick-type 微            在弹层的搜索框里打字
@@ -74,6 +78,7 @@ final class Drive {
     private let paster: Paster
     private let pasteboard: NSPasteboard
     private let sequence: PasteSequence
+    private let updater: Updater
     private let shots: URL
     private var pickerWindow: NSWindow?
     private var backdropWindow: NSWindow?
@@ -81,7 +86,7 @@ final class Drive {
     nonisolated static var isRequested: Bool { ProcessInfo.processInfo.environment["MOCHI_DRIVE"] != nil }
 
     init?(panel: PanelController, settingsWindow: SettingsWindowController, paster: Paster, pasteboard: NSPasteboard,
-          sequence: PasteSequence) {
+          sequence: PasteSequence, updater: Updater) {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MOCHI_DRIVE"], let script = try? String(contentsOfFile: path, encoding: .utf8) else {
             return nil
@@ -92,9 +97,11 @@ final class Drive {
         self.paster = paster
         self.pasteboard = pasteboard
         self.sequence = sequence
+        self.updater = updater
         shots = URL(filePath: environment["MOCHI_SHOTS"] ?? "/tmp/mochi-shots", directoryHint: .isDirectory)
         panel.isQuiet = true
         settingsWindow.isQuiet = true
+        updater.isQuiet = true
     }
 
     func run() async {
@@ -194,6 +201,14 @@ final class Drive {
         case "clear-sequence": settings.clearSequenceShortcut()
         case "sequence": sequence.pasteNext()
         case "newline": settings.sequenceAddsNewline = argument == "on"
+        case "update":
+            switch argument {
+            case "check": await updater.check(userInitiated: true)
+            case "install": await updater.install()
+            case "auto-off": settings.checksForUpdates = false
+            default: break
+            }
+            print("updater: \(updater.status) latest=\(updater.latest?.tag ?? "nil")")
         case "press":
             if let event = event(argument, window: settingsWindow.windowNumber ?? 0) {
                 if settings.isRecording {

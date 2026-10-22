@@ -691,7 +691,7 @@ private struct Footer: View {
         HStack(spacing: 8) {
             // 菜单栏图标可能被隐藏、被刘海挤掉，这里总能打开设置、退出。
             HStack(spacing: 2) {
-                FooterButton(title: "设置", symbol: "gearshape") { model.perform?(.appMenu) }
+                FooterButton(title: "设置", symbol: "gearshape", hasBadge: model.updateVersion != nil) { model.perform?(.appMenu) }
             }
             .padding(.horizontal, 3)
             .footerPill()
@@ -767,6 +767,8 @@ private struct FooterButton: View {
     var symbol: String?
     var key: String?
     var isPrimary = false
+    /// 图标右上角一个强调色的点：有新版本。
+    var hasBadge = false
     let action: () -> Void
     @State private var isHovered = false
 
@@ -776,6 +778,11 @@ private struct FooterButton: View {
                 if let symbol {
                     Image(systemName: symbol)
                         .foregroundStyle(.secondary)
+                        .overlay(alignment: .topTrailing) {
+                            if hasBadge {
+                                Circle().fill(Color.accentColor).frame(width: 6, height: 6).offset(x: 2, y: -1)
+                            }
+                        }
                 }
                 Text(title)
                     .foregroundStyle(isPrimary ? .primary : .secondary)

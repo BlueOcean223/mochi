@@ -27,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKey: GlobalHotKey?
     private var sequenceHotKey: GlobalHotKey?
     private var settingsWindow: SettingsWindowController?
+    private lazy var updater = Updater(settings: settings)
+    private var hud: HUD?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logPasteboardAccess()
@@ -35,7 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !isDriving {
             statusMenu = StatusMenu(settings: settings, openPanel: { [weak self] in self?.panel?.show() },
                                     openSettings: { [weak self] in self?.settingsWindow?.show() },
-                                    resetPanelPosition: { [weak self] in self?.panel?.resetPosition() })
+                                    resetPanelPosition: { [weak self] in self?.panel?.resetPosition() },
+                                    installUpdate: { [weak self] in self?.installUpdate() })
         }
         let directory = dataDirectory()
         let store: ClipStore
@@ -57,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         log.notice("recording into \(directory.path, privacy: .public)")
         let paster = Paster(store: store, pasteboard: pasteboard, recorder: recorder)
         let hud = HUD()
+        self.hud = hud
         let panel = PanelController(store: store, settings: settings, paster: paster, hud: hud)
         self.panel = panel
         let settings = settings
@@ -72,13 +76,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.sequenceHotKey = sequenceHotKey
         let settingsWindow = SettingsWindowController(
             model: SettingsModel(settings: settings, store: store, recorder: recorder, hotKeys: [.panel: hotKey, .sequence: sequenceHotKey],
-                                 paster: paster))
+                                 paster: paster, updater: updater))
         self.settingsWindow = settingsWindow
         panel.openSettings = { [weak settingsWindow] in settingsWindow?.show() }
         panel.pauseChanged = { [weak self] in self?.statusMenu?.updatePauseItem() }
+        panel.installUpdate = { [weak self] in self?.installUpdate() }
+        updater.changed = { [weak self, weak panel] in
+            let version = self?.updater.latest?.version?.description
+            self?.statusMenu?.showUpdate(version)
+            panel?.model.setUpdateVersion(version)
+        }
 
         #if DEBUG
-        if let drive = Drive(panel: panel, settingsWindow: settingsWindow, paster: paster, pasteboard: pasteboard, sequence: sequence) {
+        if let drive = Drive(panel: panel, settingsWindow: settingsWindow, paster: paster, pasteboard: pasteboard, sequence: sequence,
+                             updater: updater) {
             // 跑脚本时不占全局快捷键，免得和正在用的 Mochi 抢。
             hotKey.isQuiet = true
             sequenceHotKey.isQuiet = true
@@ -91,6 +102,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         hotKey.register()
         sequenceHotKey.register()
+        updater.start()
+    }
+
+    /// 菜单栏菜单、面板里的「更新到 …」：进度和失败的原因用 HUD 说，设置窗口里也看得到。
+    private func installUpdate() {
+        guard let version = updater.latest?.version else { return }
+        hud?.show("正在下载 Mochi \(version)…")
+        Task {
+            await updater.install()
+            if case .failed(let message) = updater.status { hud?.show(message) }
+        }
     }
 }
 

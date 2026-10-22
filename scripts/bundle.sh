@@ -1,6 +1,8 @@
 #!/bin/bash
 # 编译并拼成 .app：scripts/bundle.sh [debug|release]，产物是 build/Mochi.app。
+# MOCHI_APP 可以换产物的位置（测试用的构建放别处，不盖掉平常用的那个）。
 # MOCHI_VERSION、MOCHI_BUILD 有值时写进包里的 Info.plist（发布时用标签的版本号），仓库里的不动。
+# MOCHI_UPDATE_REPOSITORY（owner/name）换掉检查更新问的 GitHub 仓库，GitHub Actions 里是构建它的那个仓库。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -8,7 +10,7 @@ CONFIG="${1:-debug}"
 swift build -c "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/Mochi"
 
-APP=build/Mochi.app
+APP="${MOCHI_APP:-build/Mochi.app}"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Mochi"
@@ -18,6 +20,9 @@ if [ -n "${MOCHI_VERSION:-}" ]; then
 fi
 if [ -n "${MOCHI_BUILD:-}" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $MOCHI_BUILD" "$APP/Contents/Info.plist"
+fi
+if [ -n "${MOCHI_UPDATE_REPOSITORY:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Set :MochiUpdateRepository $MOCHI_UPDATE_REPOSITORY" "$APP/Contents/Info.plist"
 fi
 # 图标由 scripts/icon.swift 画，改图案时重跑它。
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"

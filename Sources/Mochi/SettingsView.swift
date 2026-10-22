@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 设置窗口里的内容：呼出快捷键、保留时长、开机启动、回车做什么、按顺序粘贴、辅助功能权限、忽略的应用。样子照 Raycast。
+/// 设置窗口里的内容：呼出快捷键、保留时长、开机启动、回车做什么、按顺序粘贴、辅助功能权限、忽略的应用、更新。样子照 Raycast。
 struct SettingsView: View {
     @Bindable var model: SettingsModel
 
@@ -98,12 +98,20 @@ struct SettingsView: View {
             Section {
                 IgnoredApps(model: model)
             }
+
+            Section {
+                UpdateRow(updater: model.updater)
+                Toggle(isOn: $model.checksForUpdates) {
+                    Text("自动检查更新")
+                    Text("每天问一次 GitHub 有没有新版本")
+                }
+            }
         }
         .formStyle(.grouped)
         // 标题栏不画标题以后，上面的空白显得太多，收一点。滚动的时候不收，不然内容会滚到红绿灯底下。
         .padding(.top, scrolls ? 0 : -12)
         // 窗口跟着内容一样高；忽略的应用多到窗口太高时改成固定高度，里面滚动。
-        .frame(width: 480, height: scrolls ? 760 : nil)
+        .frame(width: 480, height: scrolls ? 800 : nil)
         .fixedSize(horizontal: false, vertical: !scrolls)
         .scrollDisabled(!scrolls)
         .fileImporter(isPresented: $model.isChoosingFile, allowedContentTypes: [.applicationBundle], allowsMultipleSelection: true) { result in
@@ -123,11 +131,52 @@ struct SettingsView: View {
         }
     }
 
-    /// 6 个时窗口大约 760 高，再多就固定 760、里面滚动。13 寸的 MacBook Air 屏幕可用的高度在 900 上下。
-    private var scrolls: Bool { model.ignoredApps.count > 6 }
+    /// 4 个时窗口大约 810 高（每个应用 33），再多就固定高度、里面滚动。13 寸的 MacBook Air 屏幕可用的高度在 900 上下。
+    private var scrolls: Bool { model.ignoredApps.count > 4 }
 
     private var retentionTitle: String {
         "改成只保留 \(model.retentionChange?.retention.title ?? "")？"
+    }
+}
+
+/// 现在的版本和检查更新的结果。有新版本时右边是「更新到 …」，下面是更新说明的链接。
+private struct UpdateRow: View {
+    let updater: Updater
+
+    var body: some View {
+        LabeledContent {
+            if updater.isBusy {
+                ProgressView().controlSize(.small)
+            } else if let version = updater.latest?.version {
+                Button("更新到 \(version.description)") { Task { await updater.install() } }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Button("检查更新") { Task { await updater.check(userInitiated: true) } }
+                    .disabled(!updater.isAvailable)
+            }
+        } label: {
+            Text(verbatim: "Mochi \(updater.currentVersion)")
+            detail
+        }
+    }
+
+    @ViewBuilder private var detail: some View {
+        switch updater.status {
+        case .checking: Text("正在检查…")
+        case .downloading: Text("正在下载…")
+        case .installing: Text("正在安装…")
+        case .failed(let message): Text(message).foregroundStyle(.red)
+        case .upToDate where updater.latest == nil: Text("已经是最新版本")
+        default:
+            if let latest = updater.latest {
+                // 字符串先拼好再交给 LocalizedStringKey，Markdown 的链接才认。
+                Text(LocalizedStringKey("新版本已发布，[看看改了什么](\(latest.pageURL.absoluteString))"))
+            } else if let checked = updater.lastChecked {
+                Text(verbatim: "上次检查：\(Formatting.copiedAt(checked))")
+            } else {
+                Text("还没检查过")
+            }
+        }
     }
 }
 

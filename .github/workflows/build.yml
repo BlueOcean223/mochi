@@ -3,6 +3,7 @@
 #
 # 签名：仓库 Secrets 里有 MOCHI_CERT_P12（证书和私钥的 p12，base64）和 MOCHI_CERT_PASSWORD 时用它签，
 # 辅助功能权限认签名，换了新版本权限还在；没有就是 ad-hoc 签名，每个版本都要重新给权限。
+# 推标签发布时必须有证书：Mochi 自动更新只装和自己同一张证书签的版本，ad-hoc 签名的版本谁都装不上。
 name: Build
 
 on:
@@ -53,12 +54,17 @@ jobs:
       - name: Bundle
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [ "$HAS_CERT" != true ]; then
+              echo "::error::发布要用 Secrets 里的证书签名（MOCHI_CERT_P12、MOCHI_CERT_PASSWORD）"
+              exit 1
+            fi
             VERSION="${GITHUB_REF_NAME#v}"
             export MOCHI_VERSION="$VERSION"
           else
             VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)-${GITHUB_SHA::7}"
           fi
           export MOCHI_BUILD="$GITHUB_RUN_NUMBER"
+          export MOCHI_UPDATE_REPOSITORY="$GITHUB_REPOSITORY"
           if [ "$HAS_CERT" != true ]; then export SIGN_IDENTITY=-; fi
           scripts/bundle.sh release
           codesign --verify --strict --verbose=2 build/Mochi.app

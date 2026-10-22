@@ -94,6 +94,8 @@ enum PanelCommand: Equatable {
     case resetPosition
     /// ⌘Q：退出 Mochi。
     case quit
+    /// 有新版本时 Mochi 自己的菜单里的「更新到 …」：下载、替换、重启。
+    case installUpdate
 }
 
 /// 回车这几个组合各做什么，跟着设置变（照 Raycast）：回车默认复制时 ↵ 和 ⌘↵ 对调、⌥↵ 变成复制且不关闭面板；
@@ -183,6 +185,12 @@ final class PanelModel {
 
     func setPaused(_ paused: Bool) {
         isPaused = paused
+    }
+    /// 查到的新版本号；有的话底栏「设置」上有个点，菜单里有「更新到 …」。
+    private(set) var updateVersion: String?
+
+    func setUpdateVersion(_ version: String?) {
+        updateVersion = version
     }
     /// 呼出面板时的前台应用，回车粘贴到它那里。
     private(set) var frontAppName: String?

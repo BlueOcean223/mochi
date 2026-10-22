@@ -23,6 +23,9 @@
 	<!-- 没有 Dock 图标，只在菜单栏 -->
 	<key>LSUIElement</key>
 	<true/>
+	<!-- 检查更新问的 GitHub 仓库（owner/name） -->
+	<key>MochiUpdateRepository</key>
+	<string>BlueOcean223/mochi</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

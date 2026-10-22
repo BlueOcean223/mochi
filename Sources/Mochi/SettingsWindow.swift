@@ -173,6 +173,9 @@ final class SettingsModel {
     var sequenceAddsNewline: Bool {
         didSet { settings.sequenceAddsNewline = sequenceAddsNewline }
     }
+    var checksForUpdates: Bool {
+        didSet { settings.checksForUpdates = checksForUpdates }
+    }
     private(set) var loginItem = LoginItem.off
     private(set) var loginProblem: String?
     private(set) var ignoredApps: [IgnoredApp] = []
@@ -194,19 +197,23 @@ final class SettingsModel {
     private let recorder: Recorder
     private let hotKeys: [ShortcutSlot: GlobalHotKey]
     private let paster: Paster
+    let updater: Updater
 
-    init(settings: Settings, store: ClipStore, recorder: Recorder, hotKeys: [ShortcutSlot: GlobalHotKey], paster: Paster) {
+    init(settings: Settings, store: ClipStore, recorder: Recorder, hotKeys: [ShortcutSlot: GlobalHotKey], paster: Paster,
+         updater: Updater) {
         self.settings = settings
         self.store = store
         self.recorder = recorder
         self.hotKeys = hotKeys
         self.paster = paster
+        self.updater = updater
         shortcut = settings.shortcut
         sequenceShortcut = settings.sequenceShortcut
         retention = settings.retention
         enterAction = settings.enterAction
         prefersPlainText = settings.prefersPlainText
         sequenceAddsNewline = settings.sequenceAddsNewline
+        checksForUpdates = settings.checksForUpdates
     }
 
     func refresh() {
@@ -216,6 +223,7 @@ final class SettingsModel {
         enterAction = settings.enterAction
         prefersPlainText = settings.prefersPlainText
         sequenceAddsNewline = settings.sequenceAddsNewline
+        checksForUpdates = settings.checksForUpdates
         refreshTrust()
         refreshLoginItem()
         loadIgnoredApps()

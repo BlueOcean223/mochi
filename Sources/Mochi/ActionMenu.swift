@@ -128,13 +128,17 @@ extension PanelModel {
     /// 底栏左边「设置」的菜单。
     func openAppMenu() {
         isTypeMenuOpen = false
-        let actions = [
+        var actions = [
             PanelAction(title: "设置…", icon: .symbol("gearshape"), shortcut: "⌘,", command: .settings),
             PanelAction(title: isPaused ? "恢复记录" : "暂停记录", icon: .symbol(isPaused ? "play.circle" : "pause.circle"),
                         command: .togglePause),
             PanelAction(title: "窗口位置复原", icon: .symbol("arrow.uturn.backward"), command: .resetPosition),
             PanelAction(title: "退出 Mochi", icon: .symbol("power"), shortcut: "⌘Q", group: 1, command: .quit),
         ]
+        if let version = updateVersion {
+            actions.insert(PanelAction(title: "更新到 \(version)", icon: .symbol("arrow.down.circle"), group: -1,
+                                       command: .installUpdate), at: 0)
+        }
         actionMenu = ActionMenu(.init(title: "Mochi", actions: actions), placement: .app)
     }
 

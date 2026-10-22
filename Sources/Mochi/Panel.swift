@@ -83,6 +83,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     var openSettings: (() -> Void)?
     /// 在面板里暂停、恢复了记录，菜单栏图标跟着变。
     var pauseChanged: (() -> Void)?
+    /// Mochi 自己的菜单里点了「更新到 …」。
+    var installUpdate: (() -> Void)?
     #if DEBUG
     /// 调试脚本截图时当作前台应用的名字和图标（底栏「粘贴到 X」、⌘K 里的图标）。
     var pretendFrontApp: (name: String, icon: NSImage)?
@@ -433,6 +435,9 @@ final class PanelController: NSObject, NSWindowDelegate {
             } else {
                 NSApp.terminate(nil)
             }
+        case .installUpdate:
+            hide()
+            installUpdate?()
         }
     }
 
