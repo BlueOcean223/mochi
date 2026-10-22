@@ -60,7 +60,7 @@ Mochi 没有 Dock 图标，常驻在菜单栏。菜单栏图标被隐藏时，�
 
 ## 安装
 
-从 [Releases](../../releases) 下载 `Mochi-<版本号>.zip`，解压，把 Mochi.app 拖进「应用程序」。
+从 [Releases](../../releases) 下载 `Mochi-<版本号>.dmg`，打开，把 Mochi 拖进「应用程序」。（旁边的 `.zip` 是 Mochi 自动更新时下载的。）
 
 Mochi 没有经过苹果公证，第一次打开会被系统拦下。去「系统设置 › 隐私与安全性」点「仍要打开」，或者运行：
 
@@ -82,7 +82,7 @@ open build/Mochi.app
 
 钥匙串里有名为「Mochi Development」的证书时，`scripts/bundle.sh` 用它签名，没有就用 ad-hoc 签名。辅助功能权限认签名，ad-hoc 签名每次重新构建都要重新给权限。想省掉这一步，在「钥匙串访问」里建一张自签的代码签名证书（证书助理 › 创建证书…，证书类型选「代码签名」），名字叫 Mochi Development。
 
-每次推送，GitHub Actions 都会构建、跑测试。推一个 `v` 开头的标签（比如 `v0.2.0`）会发布一个 Release，附上打包好的应用。发布的版本要用仓库 Secrets 里的证书签名：`MOCHI_CERT_P12`（证书和私钥导出的 .p12，base64）和 `MOCHI_CERT_PASSWORD`。Mochi 只更新到同一张证书签的版本，所以没有这两项时发布会失败。
+每次推送，GitHub Actions 都会构建、跑测试。推一个 `v` 开头的标签（比如 `v0.2.0`）会发布一个 Release，附上打包好的应用（dmg 和 zip）。发布的版本要用仓库 Secrets 里的证书签名：`MOCHI_CERT_P12`（证书和私钥导出的 .p12，base64）和 `MOCHI_CERT_PASSWORD`。Mochi 只更新到同一张证书签的版本，所以没有这两项时发布会失败。
 
 应用图标是 `scripts/icon.swift` 画的。
 
@@ -94,7 +94,7 @@ open build/Mochi.app
 
 - `Sources/MochiCore`：读剪切板、认内容类型、存储（用系统自带的 libsqlite3）、图片处理。测试在 `Tests/MochiCoreTests`。
 - `Sources/Mochi`：应用本身：菜单栏、面板、设置窗口、全局快捷键、粘贴、更新。
-- `scripts`：构建、测试、画图标的脚本。
+- `scripts`：构建、测试、打 dmg、画图标的脚本。
 
 ## 致谢
 

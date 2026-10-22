@@ -1,5 +1,5 @@
 # 推到 main、提 PR 时：跑测试、打包，打好的 Mochi.app 放在这次运行的 Artifacts 里。
-# 推 v 开头的标签（v0.2.0）时：再建一个 GitHub Release，附上 Mochi-0.2.0.zip。
+# 推 v 开头的标签（v0.2.0）时：再建一个 GitHub Release，附上 Mochi-0.2.0.dmg（下载安装用）和 Mochi-0.2.0.zip（Mochi 自动更新用）。
 #
 # 签名：仓库 Secrets 里有 MOCHI_CERT_P12（证书和私钥的 p12，base64）和 MOCHI_CERT_PASSWORD 时用它签，
 # 辅助功能权限认签名，换了新版本权限还在；没有就是 ad-hoc 签名，每个版本都要重新给权限。
@@ -69,12 +69,15 @@ jobs:
           scripts/bundle.sh release
           codesign --verify --strict --verbose=2 build/Mochi.app
           ditto -c -k --keepParent build/Mochi.app "build/Mochi-$VERSION.zip"
-          echo "ZIP=build/Mochi-$VERSION.zip" >> "$GITHUB_ENV"
+          scripts/dmg.sh build/Mochi.app "build/Mochi-$VERSION.dmg"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v7
         with:
           name: Mochi
-          path: ${{ env.ZIP }}
+          path: |
+            build/Mochi-${{ env.VERSION }}.dmg
+            build/Mochi-${{ env.VERSION }}.zip
           if-no-files-found: error
 
   release:
@@ -90,4 +93,4 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" Mochi-*.zip --repo "$GITHUB_REPOSITORY" --title "Mochi ${GITHUB_REF_NAME#v}" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" Mochi-*.dmg Mochi-*.zip --repo "$GITHUB_REPOSITORY" --title "Mochi ${GITHUB_REF_NAME#v}" --generate-notes

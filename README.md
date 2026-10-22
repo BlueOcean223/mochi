@@ -62,7 +62,7 @@ Mochi has no Dock icon. It lives in the menu bar. If the menu bar icon is hidden
 
 ## Install
 
-Download `Mochi-<version>.zip` from [Releases](../../releases), unzip it, and move Mochi.app to Applications.
+Download `Mochi-<version>.dmg` from [Releases](../../releases), open it, and drag Mochi into Applications. (The `.zip` next to it is what Mochi's updater downloads.)
 
 Mochi is not notarized by Apple, so macOS blocks it the first time you open it. Go to System Settings › Privacy & Security and click Open Anyway, or run:
 
@@ -84,7 +84,7 @@ open build/Mochi.app
 
 `scripts/bundle.sh` signs the app with a certificate named "Mochi Development" if your keychain has one, and ad hoc otherwise. macOS ties the Accessibility permission to the signature, so with ad hoc signing you have to grant it again after every build. To avoid that, create a self-signed code signing certificate named Mochi Development in Keychain Access (Certificate Assistant › Create a Certificate…, certificate type Code Signing).
 
-GitHub Actions builds and tests every push. Pushing a tag that starts with `v`, such as `v0.2.0`, publishes a release with the zipped app. Releases have to be signed with the certificate stored in the repository secrets `MOCHI_CERT_P12` (the certificate and its private key as a base64 .p12) and `MOCHI_CERT_PASSWORD`, because Mochi only updates to versions signed with the same certificate; without them the release build fails.
+GitHub Actions builds and tests every push. Pushing a tag that starts with `v`, such as `v0.2.0`, publishes a release with a disk image and a zip of the app. Releases have to be signed with the certificate stored in the repository secrets `MOCHI_CERT_P12` (the certificate and its private key as a base64 .p12) and `MOCHI_CERT_PASSWORD`, because Mochi only updates to versions signed with the same certificate; without them the release build fails.
 
 The app icon is drawn by `scripts/icon.swift`.
 
@@ -96,7 +96,7 @@ History is stored in `~/Library/Application Support/com.blueocean223.mochi/`: on
 
 - `Sources/MochiCore`: reading the pasteboard, deciding what kind of content it is, storage (SQLite through the system's libsqlite3), and images. Tested in `Tests/MochiCoreTests`.
 - `Sources/Mochi`: the app: menu bar item, panel, settings window, global shortcuts, pasting, updates.
-- `scripts`: build, test, and icon scripts.
+- `scripts`: build, test, disk image, and icon scripts.
 
 ## Acknowledgements
 
