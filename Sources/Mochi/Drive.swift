@@ -3,11 +3,12 @@ import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 import ImageIO
+import ScreenCaptureKit
 import MochiCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 调试构建里按脚本操作面板、截图，不碰真实的鼠标键盘、不抢用户的键盘（notes/dev-env.md「测界面」）。
+/// 调试构建里按脚本操作面板、截图，不碰真实的鼠标键盘、不抢用户的键盘。
 ///
 /// `MOCHI_DRIVE=脚本 MOCHI_SHOTS=截图目录 MOCHI_SEED=1 build/Mochi.app/Contents/MacOS/Mochi`
 /// 要从终端直接跑二进制：截图用的 `screencapture` 记在终端的屏幕录制权限上。`.agent/tools/shots/shots.sh` 是这么跑的。
@@ -27,6 +28,9 @@ import UniformTypeIdentifiers
 ///     shot 名字               截面板，存成 截图目录/名字.png。宿主终端有屏幕录制权限时用 screencapture 截真窗口，
 ///                             没有时在应用里画（画不出毛玻璃、vibrancy）
 ///     shot-quicklook 名字     截 Quick Look 窗口（只能用 screencapture）
+///     backdrop 60             在面板后面垫一块灰（0–255），看毛玻璃背后是深色窗口时的样子；backdrop 不带参数是拿掉
+///     tint 0.7                浅色外观下毛玻璃上那层白的浓度（试样子用）
+///     shot-backdrop 名字      把面板连同 backdrop 一起截（ScreenCaptureKit，只合成这两个窗口），毛玻璃透出背后那块灰
 ///     trusted                 当作有辅助功能权限（底栏、设置里显示有权限的样子；照样不发 ⌘V）
 ///     settings                打开设置窗口（也压在桌面下面）
 ///     settings-close
@@ -51,6 +55,7 @@ final class Drive {
     private let pasteboard: NSPasteboard
     private let shots: URL
     private var pickerWindow: NSWindow?
+    private var backdropWindow: NSWindow?
 
     nonisolated static var isRequested: Bool { ProcessInfo.processInfo.environment["MOCHI_DRIVE"] != nil }
 
@@ -101,6 +106,9 @@ final class Drive {
                 }
             case "shot-quicklook": await capture(window: panel.quickLookWindowNumber, name: argument)
             case "trusted": paster.pretendsTrusted = true
+            case "backdrop": setBackdrop(Int(argument))
+            case "tint": panel.lightTint = CGFloat(Double(argument) ?? 0.7)
+            case "shot-backdrop": await captureWithBackdrop(name: argument)
             case "settings": settingsWindow.show()
             case "settings-close": settingsWindow.close()
             case "record": settings.startRecording()
@@ -151,6 +159,53 @@ final class Drive {
     }
 
     private var settings: SettingsModel { settingsWindow.model }
+
+    /// 只合成面板和垫在后面的那块灰，别的窗口、桌面都不进图。
+    private func captureWithBackdrop(name: String) async {
+        guard let backdrop = backdropWindow else { print("drive: 先 backdrop"); return }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            let ids: Set<CGWindowID> = [CGWindowID(panel.windowNumber), CGWindowID(backdrop.windowNumber)]
+            let windows = content.windows.filter { ids.contains($0.windowID) }
+            guard windows.count == 2, let display = content.displays.first(where: { $0.frame.intersects(panel.frame) }) ?? content.displays.first else {
+                print("drive: 找不到窗口 \(windows.count)")
+                return
+            }
+            let filter = SCContentFilter(display: display, including: windows)
+            let config = SCStreamConfiguration()
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            // 只截面板那一块：sourceRect 是显示器坐标（左上角原点）。
+            let screenHeight = display.frame.height
+            let rect = CGRect(x: panel.frame.minX - display.frame.minX, y: screenHeight - panel.frame.maxY,
+                              width: panel.frame.width, height: panel.frame.height)
+            config.sourceRect = rect
+            config.width = Int(rect.width * scale)
+            config.height = Int(rect.height * scale)
+            config.showsCursor = false
+            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            guard let destination = CGImageDestinationCreateWithURL(shots.appending(path: "\(name).png") as CFURL,
+                                                                    UTType.png.identifier as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(destination, image, nil)
+            print(CGImageDestinationFinalize(destination) ? "drive: shot \(name).png" : "drive: 写不出 \(name).png")
+        } catch {
+            print("drive: ScreenCaptureKit 失败：\(error)")
+        }
+    }
+
+    /// 面板背后垫一块纯灰的窗口，比面板再低一层，也压在桌面下面。毛玻璃会把它透出来。
+    private func setBackdrop(_ gray: Int?) {
+        backdropWindow?.orderOut(nil)
+        backdropWindow = nil
+        guard let gray else { return }
+        let frame = panel.frame.insetBy(dx: -60, dy: -60)
+        let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.level = NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)) - 2)
+        window.ignoresMouseEvents = true
+        let value = CGFloat(gray) / 255
+        window.backgroundColor = NSColor(srgbRed: value, green: value, blue: value, alpha: 1)
+        window.orderFrontRegardless()
+        backdropWindow = window
+    }
 
     /// 弹层的内容放进一个和弹层一样的毛玻璃圆角窗口，压在桌面下面，摆在设置窗口右边。
     private func showPicker() {

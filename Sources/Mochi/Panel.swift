@@ -33,7 +33,7 @@ final class ClipPanel: NSPanel {
     }
 }
 
-/// 管面板的显示、收起和键盘。面板只建一次，收起时藏起来不销毁（requirements.md「呼出要快」）。
+/// 管面板的显示、收起和键盘。面板只建一次，收起时藏起来不销毁，再呼出时不用重建，出来得快。
 @MainActor
 final class PanelController: NSObject, NSWindowDelegate {
     let model: PanelModel
@@ -75,7 +75,15 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     var windowNumber: Int { panel.windowNumber }
+    var frame: NSRect { panel.frame }
     var contentView: NSView? { panel.contentView }
+    private let tint = LightTintView()
+
+    /// 浅色外观下盖在毛玻璃上的那层白有多浓。
+    var lightTint: CGFloat {
+        get { tint.alpha }
+        set { tint.alpha = newValue }
+    }
     var quickLookWindowNumber: Int { quickLook.windowNumber }
 
     private func makeContentView() -> NSView {
@@ -84,6 +92,9 @@ final class PanelController: NSObject, NSWindowDelegate {
         effect.blendingMode = .behindWindow
         effect.state = .active
         effect.maskImage = .roundedRectMask(radius: PanelMetrics.cornerRadius)
+        tint.frame = effect.bounds
+        tint.autoresizingMask = [.width, .height]
+        effect.addSubview(tint)
         let hosting = NSHostingView(rootView: PanelView(model: model))
         hosting.sizingOptions = []
         hosting.frame = effect.bounds
@@ -308,8 +319,27 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 }
 
+/// 浅色外观下在毛玻璃上盖一层白。背后是深色的窗口时毛玻璃发灰，黑字的对比不够。深色外观不盖。
+final class LightTintView: NSView {
+    var alpha: CGFloat = 0.7 {
+        didSet { needsDisplay = true }
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        let isLight = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua
+        layer?.backgroundColor = isLight ? NSColor.white.withAlphaComponent(alpha).cgColor : NSColor.clear.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
 extension PanelCommand {
-    /// 快捷键表见 requirements.md「操作」。
+    /// 面板里的快捷键，尽量和 Raycast 的剪切板历史一样。
     init?(_ event: NSEvent) {
         let modifiers = event.modifierFlags.intersection([.command, .shift, .control, .option])
         let command: PanelCommand?
