@@ -321,7 +321,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
 /// 浅色外观下在毛玻璃上盖一层白。背后是深色的窗口时毛玻璃发灰，黑字的对比不够。深色外观不盖。
 final class LightTintView: NSView {
-    var alpha: CGFloat = 0.7 {
+    var alpha: CGFloat = 0.64 {
         didSet { needsDisplay = true }
     }
 

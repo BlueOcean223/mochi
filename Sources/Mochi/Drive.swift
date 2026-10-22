@@ -29,7 +29,7 @@ import UniformTypeIdentifiers
 ///                             没有时在应用里画（画不出毛玻璃、vibrancy）
 ///     shot-quicklook 名字     截 Quick Look 窗口（只能用 screencapture）
 ///     backdrop 60             在面板后面垫一块灰（0–255），看毛玻璃背后是深色窗口时的样子；backdrop 不带参数是拿掉
-///     tint 0.7                浅色外观下毛玻璃上那层白的浓度（试样子用）
+///     tint 0.64               浅色外观下毛玻璃上那层白的浓度（试样子用）
 ///     shot-backdrop 名字      把面板连同 backdrop 一起截（ScreenCaptureKit，只合成这两个窗口），毛玻璃透出背后那块灰
 ///     trusted                 当作有辅助功能权限（底栏、设置里显示有权限的样子；照样不发 ⌘V）
 ///     settings                打开设置窗口（也压在桌面下面）
@@ -107,7 +107,7 @@ final class Drive {
             case "shot-quicklook": await capture(window: panel.quickLookWindowNumber, name: argument)
             case "trusted": paster.pretendsTrusted = true
             case "backdrop": setBackdrop(Int(argument))
-            case "tint": panel.lightTint = CGFloat(Double(argument) ?? 0.7)
+            case "tint": panel.lightTint = CGFloat(Double(argument) ?? 0.64)
             case "shot-backdrop": await captureWithBackdrop(name: argument)
             case "settings": settingsWindow.show()
             case "settings-close": settingsWindow.close()
