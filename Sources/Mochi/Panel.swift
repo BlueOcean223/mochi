@@ -81,6 +81,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     private var hintMonitor: Any?
     private var hintTimer: Task<Void, Never>?
     var openSettings: (() -> Void)?
+    /// 在面板里暂停、恢复了记录，菜单栏图标跟着变。
+    var pauseChanged: (() -> Void)?
 
     /// 调试脚本在跑（`Drive`）：面板压在桌面壁纸下面，用户看不见；不抢键盘、不接鼠标，失焦也不收起；
     /// 不发 ⌘V，不打开 Finder、浏览器。
@@ -345,7 +347,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
         // 操作面板里选了一项，或者面板开着时按了某个操作的快捷键：先关面板再做。子菜单是换一层，不关。
         switch command {
-        case .actions, .submenu: break
+        case .actions, .submenu, .appMenu: break
         default: closeActionMenu()
         }
         switch command {
@@ -401,6 +403,28 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .settings:
             hide()
             openSettings?()
+        case .appMenu:
+            if model.actionMenu?.placement == .app {
+                closeActionMenu()
+            } else {
+                model.openAppMenu()
+            }
+        case .togglePause:
+            settings.isPaused.toggle()
+            model.setPaused(settings.isPaused)
+            pauseChanged?()
+            hud.show(settings.isPaused ? "已暂停记录" : "已恢复记录")
+        case .resetPosition:
+            resetPosition()
+            let origin = origin()
+            placedOrigin = origin
+            panel.setFrameOrigin(origin)
+        case .quit:
+            if isQuiet {
+                print("panel: 不退出（调试脚本）")
+            } else {
+                NSApp.terminate(nil)
+            }
         }
     }
 
@@ -730,6 +754,8 @@ extension PanelCommand {
             command = modifiers == .command ? .open : modifiers == [.command, .shift] ? .revealInFinder : nil
         case kVK_ANSI_Comma:
             command = modifiers == .command ? .settings : nil
+        case kVK_ANSI_Q:
+            command = modifiers == .command ? .quit : nil
         default:
             command = nil
         }

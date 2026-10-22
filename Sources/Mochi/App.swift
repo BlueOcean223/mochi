@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                  paster: paster))
         self.settingsWindow = settingsWindow
         panel.openSettings = { [weak settingsWindow] in settingsWindow?.show() }
+        panel.pauseChanged = { [weak self] in self?.statusMenu?.updatePauseItem() }
 
         #if DEBUG
         if let drive = Drive(panel: panel, settingsWindow: settingsWindow, paster: paster, pasteboard: pasteboard, sequence: sequence) {

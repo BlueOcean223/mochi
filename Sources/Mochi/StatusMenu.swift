@@ -66,8 +66,8 @@ final class StatusMenu: NSObject {
         updatePauseItem()
     }
 
-    /// 暂停时菜单栏图标变淡，一眼能看出现在不记。
-    private func updatePauseItem() {
+    /// 暂停时菜单栏图标变淡，一眼能看出现在不记。在面板里暂停、恢复以后也调。
+    func updatePauseItem() {
         pauseItem.title = settings.isPaused ? "恢复记录" : "暂停记录"
         item.button?.appearsDisabled = settings.isPaused
     }

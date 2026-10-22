@@ -87,6 +87,13 @@ enum PanelCommand: Equatable {
     case openAccessibilitySettings
     /// ⌘,：收起面板，打开设置窗口。
     case settings
+    /// 底栏左边的「设置」：Mochi 自己的菜单（设置、暂停记录、窗口位置复原、退出）。菜单栏图标被隐藏、被挤掉时也能退出。
+    case appMenu
+    case togglePause
+    /// 面板回到默认位置，清掉记下的位置。
+    case resetPosition
+    /// ⌘Q：退出 Mochi。
+    case quit
 }
 
 /// 回车这几个组合各做什么，跟着设置变（照 Raycast）：回车默认复制时 ↵ 和 ⌘↵ 对调、⌥↵ 变成复制且不关闭面板；
@@ -173,6 +180,10 @@ final class PanelModel {
     private(set) var preview: Preview?
     private(set) var wordCount: (clipID: Int64, count: Int)?
     private(set) var isPaused = false
+
+    func setPaused(_ paused: Bool) {
+        isPaused = paused
+    }
     /// 呼出面板时的前台应用，回车粘贴到它那里。
     private(set) var frontAppName: String?
     /// 有辅助功能权限，回车能替用户按 ⌘V；没有时回车只复制。

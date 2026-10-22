@@ -35,10 +35,8 @@ struct PanelView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if model.selectedClip != nil || model.isPaused {
-                Footer(model: model)
-                    .padding(PanelMetrics.footerInset)
-            }
+            Footer(model: model)
+                .padding(PanelMetrics.footerInset)
         }
         .overlay(alignment: .topTrailing) {
             if model.isTypeMenuOpen {
@@ -54,10 +52,12 @@ struct PanelView: View {
                     .onTapGesture { model.perform?(.actions) }
             }
         }
-        .overlay(alignment: .bottomTrailing) {
+        .overlay {
+            // ⌘K 贴在右下角，底栏左边「设置」的菜单贴在左下角。
             if let menu = model.actionMenu {
                 ActionPanel(model: model, menu: menu)
                     .padding(PanelMetrics.footerInset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: menu.placement == .app ? .bottomLeading : .bottomTrailing)
                     .transition(.actionPanel)
             }
         }
@@ -683,46 +683,48 @@ private struct ConfirmButtonLabel: View {
 
 // MARK: - 底栏
 
-/// 底栏：左右两个独立的胶囊，中间空着（照 Raycast）。左边是提示和次要操作，右边是粘贴和复制。
+/// 底栏：左右两个独立的胶囊，中间空着（照 Raycast）。左边是「设置」（Mochi 自己的菜单）和提示，右边是回车做的事和 ⌘K。
 private struct Footer: View {
     let model: PanelModel
 
     var body: some View {
         HStack(spacing: 8) {
-            Group {
-                if !model.canPaste {
-                    HStack(spacing: 12) {
-                        HStack(spacing: 6) {
-                            Circle().fill(.orange).frame(width: 6, height: 6)
-                            Text("没有辅助功能权限").foregroundStyle(.orange)
-                        }
-                        Text("回车只复制")
-                        Button("去授权") { model.perform?(.openAccessibilitySettings) }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(Color.accentColor)
-                    }
-                    .padding(.horizontal, 10)
-                } else if model.isPaused {
-                    HStack(spacing: 12) {
-                        HStack(spacing: 6) {
-                            Circle().fill(.orange).frame(width: 6, height: 6)
-                            Text("暂停记录中").foregroundStyle(.orange)
-                        }
-                        Text("新的复制不会出现在这里")
-                    }
-                    .padding(.horizontal, 10)
-                } else if let clip = model.selectedClip {
-                    HStack(spacing: 2) {
-                        ForEach(actions(for: clip), id: \.title) { action in
-                            FooterButton(title: action.title, key: action.key) { model.perform?(action.command) }
-                        }
-                    }
-                    .padding(.horizontal, 3)
-                }
+            // 菜单栏图标可能被隐藏、被刘海挤掉，这里总能打开设置、退出。
+            HStack(spacing: 2) {
+                FooterButton(title: "设置", symbol: "gearshape") { model.perform?(.appMenu) }
             }
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+            .padding(.horizontal, 3)
             .footerPill()
+            .opacity(model.actionMenu?.placement == .app ? 0 : 1)
+            .animation(.easeOut(duration: 0.15), value: model.actionMenu?.placement == .app)
+            if !model.canPaste {
+                HStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        Circle().fill(.orange).frame(width: 6, height: 6)
+                        Text("没有辅助功能权限").foregroundStyle(.orange)
+                    }
+                    Text("回车只复制")
+                    Button("去授权") { model.perform?(.openAccessibilitySettings) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                }
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .footerPill()
+            } else if model.isPaused {
+                HStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        Circle().fill(.orange).frame(width: 6, height: 6)
+                        Text("暂停记录中").foregroundStyle(.orange)
+                    }
+                    Text("新的复制不会出现在这里")
+                }
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .footerPill()
+            }
             Spacer(minLength: 0)
             if model.selectedClip != nil {
                 // 照 Raycast：右边是回车做的事和「操作 ⌘K」，复制等别的操作在 ⌘K 里。操作面板开着时它盖在这里，这颗胶囊淡出。
@@ -743,24 +745,11 @@ private struct Footer: View {
                 }
                 .padding(.horizontal, 3)
                 .footerPill()
-                .opacity(model.actionMenu == nil ? 1 : 0)
-                .animation(.easeOut(duration: 0.15), value: model.actionMenu == nil)
+                .opacity(model.actionMenu?.placement == .clip ? 0 : 1)
+                .animation(.easeOut(duration: 0.15), value: model.actionMenu?.placement == .clip)
             }
         }
         .font(.system(size: 12))
-    }
-
-    /// 当前这条能用的次要操作。
-    private func actions(for clip: Clip) -> [(title: String, key: String, command: PanelCommand)] {
-        var actions = [(title: clip.isPinned ? "取消置顶" : "置顶", key: "⌘.", command: PanelCommand.pin)]
-        switch clip.kind {
-        case .text:
-            let plainFirst = model.enterKeys.controlCommandEnter == .paste
-            actions.append(clip.isLink ? ("打开链接", "⌘O", .open) : plainFirst ? ("带格式粘贴", "⌃⌘↵", .paste) : ("粘贴为纯文本", "⌃⌘↵", .pastePlain))
-        case .image: actions.append(("Quick Look", "⌘Y", .quickLook))
-        case .file: actions += [("Quick Look", "⌘Y", .quickLook), ("在 Finder 中显示", "⇧⌘O", .revealInFinder)]
-        }
-        return actions
     }
 }
 
@@ -775,7 +764,8 @@ private extension View {
 
 private struct FooterButton: View {
     let title: String
-    let key: String
+    var symbol: String?
+    var key: String?
     var isPrimary = false
     let action: () -> Void
     @State private var isHovered = false
@@ -783,10 +773,16 @@ private struct FooterButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .foregroundStyle(.secondary)
+                }
                 Text(title)
                     .foregroundStyle(isPrimary ? .primary : .secondary)
                     .lineLimit(1)
-                Keycap(key: key)
+                if let key {
+                    Keycap(key: key)
+                }
             }
             .padding(.horizontal, 7)
             .frame(height: 24)

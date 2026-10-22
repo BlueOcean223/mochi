@@ -39,14 +39,22 @@ struct PanelAction: Identifiable {
     var id: String { title }
 }
 
-/// ⌘K 操作面板的状态。子菜单压在上面一层，Esc 退回上一层。
+/// ⌘K 操作面板的状态。子菜单压在上面一层，Esc 退回上一层。底栏左边「设置」的菜单也用它。
 struct ActionMenu {
+    enum Placement {
+        /// ⌘K：这一条的操作，贴在面板右下角。
+        case clip
+        /// 底栏左边的「设置」：Mochi 自己的菜单，贴在左下角。
+        case app
+    }
+
     struct Level {
         let title: String
         let actions: [PanelAction]
     }
 
     private(set) var levels: [Level]
+    let placement: Placement
     /// 底下搜索框里的字，按标题筛。
     var query = "" {
         didSet { highlighted = 0 }
@@ -55,8 +63,9 @@ struct ActionMenu {
     /// 上一次认的鼠标位置（屏幕坐标）。行滑到不动的指针下面（刚打开、按键滚动）也会报悬停，指针没动过就不算。
     private var pointer = NSEvent.mouseLocation
 
-    init(_ root: Level) {
+    init(_ root: Level, placement: Placement = .clip) {
         levels = [root]
+        self.placement = placement
     }
 
     /// 鼠标停到第 `index` 行上。指针真的动过才跟着高亮（Raycast、Tinycast 都这样）。
@@ -114,6 +123,19 @@ extension PanelModel {
             menu.push(level)
         }
         actionMenu = menu
+    }
+
+    /// 底栏左边「设置」的菜单。
+    func openAppMenu() {
+        isTypeMenuOpen = false
+        let actions = [
+            PanelAction(title: "设置…", icon: .symbol("gearshape"), shortcut: "⌘,", command: .settings),
+            PanelAction(title: isPaused ? "恢复记录" : "暂停记录", icon: .symbol(isPaused ? "play.circle" : "pause.circle"),
+                        command: .togglePause),
+            PanelAction(title: "窗口位置复原", icon: .symbol("arrow.uturn.backward"), command: .resetPosition),
+            PanelAction(title: "退出 Mochi", icon: .symbol("power"), shortcut: "⌘Q", group: 1, command: .quit),
+        ]
+        actionMenu = ActionMenu(.init(title: "Mochi", actions: actions), placement: .app)
     }
 
     /// 已经开着时进子菜单。
