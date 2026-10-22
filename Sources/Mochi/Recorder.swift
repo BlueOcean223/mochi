@@ -1,7 +1,7 @@
 import AppKit
 import MochiCore
 
-/// 盯着剪切板，有新的复制就交给 ClipStore；每小时按保留时长清一次。
+/// 盯着剪切板，有新的复制就交给 ClipStore；每分钟按保留时长清一次。
 ///
 /// 系统没有剪切板变化的通知，只能轮询 `changeCount`，0.5 秒一次（Maccy、Clipy、Tinycast 也都是这个间隔）。
 /// 读剪切板、看前台应用在主线程；认类型、算哈希、转 PNG、写库都在 ClipStore 这个 actor 里，不卡主线程。
@@ -24,7 +24,8 @@ final class Recorder {
         lastChangeCount = pasteboard.changeCount
         timers = [
             schedule(every: 0.5, tolerance: 0.1) { [weak self] in self?.poll() },
-            schedule(every: 3600, tolerance: 60) { [weak self] in self?.purge() },
+            // 保留时长最短 1 小时，每分钟清一次，过期的最多多留一分钟。是一条走索引的 DELETE，很便宜。
+            schedule(every: 60, tolerance: 10) { [weak self] in self?.purge() },
         ]
         purge()
     }

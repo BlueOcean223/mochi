@@ -9,7 +9,8 @@ enum PanelMetrics {
     static let headerHeight: CGFloat = 64
     static let listWidth: CGFloat = 300
     static let rowHeight: CGFloat = 40
-    static let footerHeight: CGFloat = 36
+    /// Raycast 是 36，用户 10-22 嫌大，改小。
+    static let footerHeight: CGFloat = 30
     static let footerInset: CGFloat = 8
     /// 底部操作条浮在内容上面，列表和信息区底下要让出这么多。
     static var footerClearance: CGFloat { footerHeight + footerInset * 2 }
@@ -74,10 +75,10 @@ private struct Keycap: View {
 
     var body: some View {
         Text(key)
-            .font(.system(size: 11))
+            .font(.system(size: 10))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 5)
-            .frame(minWidth: 20, minHeight: 20)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 18, minHeight: 18)
             .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 }
@@ -566,10 +567,10 @@ private struct Footer: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 if !model.canPaste {
                     HStack(spacing: 6) {
-                        Circle().fill(.orange).frame(width: 7, height: 7)
+                        Circle().fill(.orange).frame(width: 6, height: 6)
                         Text("没有辅助功能权限").foregroundStyle(.orange)
                     }
                     Text("回车只复制")
@@ -578,7 +579,7 @@ private struct Footer: View {
                         .foregroundStyle(Color.accentColor)
                 } else if model.isPaused {
                     HStack(spacing: 6) {
-                        Circle().fill(.orange).frame(width: 7, height: 7)
+                        Circle().fill(.orange).frame(width: 6, height: 6)
                         Text("暂停记录中").foregroundStyle(.orange)
                     }
                     Text("新的复制不会出现在这里")
@@ -593,7 +594,7 @@ private struct Footer: View {
             }
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .footerPill()
             Spacer(minLength: 0)
             if model.selectedClip != nil {
@@ -604,17 +605,17 @@ private struct Footer: View {
                         }
                         Rectangle()
                             .fill(Color.primary.opacity(0.12))
-                            .frame(width: 1, height: 14)
+                            .frame(width: 1, height: 12)
                         FooterButton(title: "复制", key: "⌘↵") { model.perform?(.copy) }
                     } else {
                         FooterButton(title: "复制", key: "↵", isPrimary: true) { model.perform?(.copy) }
                     }
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 3)
                 .footerPill()
             }
         }
-        .font(.system(size: 13))
+        .font(.system(size: 12))
     }
 
     /// 当前这条能用的次要操作（decisions.md 第 12 条）。
@@ -653,8 +654,8 @@ private struct FooterButton: View {
                     .lineLimit(1)
                 Keycap(key: key)
             }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
+            .padding(.horizontal, 7)
+            .frame(height: 24)
             .background(Color.primary.opacity(isHovered ? 0.06 : 0), in: Capsule())
             .contentShape(Capsule())
         }

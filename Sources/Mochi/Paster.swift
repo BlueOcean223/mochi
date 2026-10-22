@@ -26,9 +26,17 @@ final class Paster {
         self.recorder = recorder
     }
 
+    #if DEBUG
+    /// 调试脚本截「有权限」的样子用（`Drive` 的 trusted）。跑脚本时本来就不发 ⌘V。
+    var pretendsTrusted = false
+    #endif
+
     /// 发 ⌘V 要辅助功能权限。
     var canPaste: Bool {
-        AXIsProcessTrusted()
+        #if DEBUG
+        if pretendsTrusted { return true }
+        #endif
+        return AXIsProcessTrusted()
     }
 
     /// 弹系统的授权提示（「Mochi 想要使用辅助功能控制这台电脑」，带去系统设置的按钮）。每次启动最多弹一次，不反复打扰。

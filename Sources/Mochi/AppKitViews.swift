@@ -14,7 +14,10 @@ struct SearchField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 18)
-        field.placeholderString = placeholder
+        // 系统默认的占位字在毛玻璃上几乎和正文一样深（10-22 量的），用和分组标题一样的第三级颜色。
+        field.placeholderAttributedString = NSAttributedString(string: placeholder, attributes: [
+            .foregroundColor: NSColor.tertiaryLabelColor, .font: NSFont.systemFont(ofSize: 18),
+        ])
         field.usesSingleLineMode = true
         field.cell?.wraps = false
         field.cell?.isScrollable = true

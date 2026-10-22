@@ -65,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.openSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
         #if DEBUG
-        if let drive = Drive(panel: panel, settingsWindow: settingsWindow, pasteboard: pasteboard) {
+        if let drive = Drive(panel: panel, settingsWindow: settingsWindow, paster: paster, pasteboard: pasteboard) {
             hotKey.isQuiet = true  // 跑脚本时不占全局快捷键，免得和正在用的 Mochi 抢。
             Task {
                 await Fixtures.seedIfRequested(store)

@@ -1,16 +1,18 @@
 import Foundation
 
-/// 保留多久。置顶的不过期。
+/// 保留多久，按小时算。置顶的不过期。
 enum Retention: Int, CaseIterable {
-    case week = 7
-    case month = 30
-    case threeMonths = 90
-    case year = 365
+    case hour = 1
+    case day = 24
+    case week = 168
+    case month = 720
+    case threeMonths = 2160
+    case year = 8760
     case forever = 0
 
     /// 早于这个时间的要清掉；永久保留时是 nil。
     func cutoff(from now: Date = .now) -> Date? {
-        self == .forever ? nil : now.addingTimeInterval(-Double(rawValue) * 86_400)
+        self == .forever ? nil : now.addingTimeInterval(-Double(rawValue) * 3600)
     }
 }
 
@@ -21,8 +23,13 @@ final class Settings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        // 10-22 加「1 小时」以前保留时长按天存在 retentionDays 里，改成按小时存。
+        if defaults.object(forKey: Key.retentionHours) == nil, let days = defaults.object(forKey: Key.legacyRetentionDays) as? Int {
+            defaults.set(days * 24, forKey: Key.retentionHours)
+            defaults.removeObject(forKey: Key.legacyRetentionDays)
+        }
         defaults.register(defaults: [
-            Key.retentionDays: Retention.threeMonths.rawValue,
+            Key.retentionHours: Retention.threeMonths.rawValue,
             Key.hotKeyCode: Shortcut.standard.keyCode,
             Key.hotKeyModifiers: Shortcut.standard.modifiers,
             // 钥匙串访问、系统的「密码」应用：它们多半会打密码标记，这里再兜一层。
@@ -36,8 +43,8 @@ final class Settings {
     }
 
     var retention: Retention {
-        get { Retention(rawValue: defaults.integer(forKey: Key.retentionDays)) ?? .threeMonths }
-        set { defaults.set(newValue.rawValue, forKey: Key.retentionDays) }
+        get { Retention(rawValue: defaults.integer(forKey: Key.retentionHours)) ?? .threeMonths }
+        set { defaults.set(newValue.rawValue, forKey: Key.retentionHours) }
     }
 
     /// 呼出面板的快捷键，默认 ⌃⌘V。
@@ -57,7 +64,8 @@ final class Settings {
 
     private enum Key {
         static let paused = "paused"
-        static let retentionDays = "retentionDays"
+        static let retentionHours = "retentionHours"
+        static let legacyRetentionDays = "retentionDays"
         static let ignoredApps = "ignoredApps"
         static let hotKeyCode = "hotKeyCode"
         static let hotKeyModifiers = "hotKeyModifiers"

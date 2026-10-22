@@ -27,6 +27,7 @@ import UniformTypeIdentifiers
 ///     shot 名字               截面板，存成 截图目录/名字.png。宿主终端有屏幕录制权限时用 screencapture 截真窗口，
 ///                             没有时在应用里画（画不出毛玻璃、vibrancy）
 ///     shot-quicklook 名字     截 Quick Look 窗口（只能用 screencapture）
+///     trusted                 当作有辅助功能权限（底栏、设置里显示有权限的样子；照样不发 ⌘V）
 ///     settings                打开设置窗口（也压在桌面下面）
 ///     settings-close
 ///     record                  开始录呼出快捷键
@@ -35,7 +36,7 @@ import UniformTypeIdentifiers
 ///     pick-type 微            在弹层的搜索框里打字
 ///     shot-picker 名字        截弹层
 ///     hover bundle-id         鼠标停在这个忽略的应用上（出现移除按钮）；hover 不带参数是移开
-///     retention 7             选保留时长（天数，0 是永久），要删记录时会弹确认
+///     retention 7d            选保留时长：1h、1d、7d、30d、90d、365d，0 是永久；要删记录时会弹确认
 ///     retention-confirm       确认框里点「删掉」；retention-cancel 点「取消」
 ///     ignore /路径/某个.app    加进忽略的应用；unignore bundle-id 移除
 ///     login on|off            开机启动开关（不真的改登录项）
@@ -46,13 +47,14 @@ final class Drive {
     private let lines: [String]
     private let panel: PanelController
     private let settingsWindow: SettingsWindowController
+    private let paster: Paster
     private let pasteboard: NSPasteboard
     private let shots: URL
     private var pickerWindow: NSWindow?
 
     nonisolated static var isRequested: Bool { ProcessInfo.processInfo.environment["MOCHI_DRIVE"] != nil }
 
-    init?(panel: PanelController, settingsWindow: SettingsWindowController, pasteboard: NSPasteboard) {
+    init?(panel: PanelController, settingsWindow: SettingsWindowController, paster: Paster, pasteboard: NSPasteboard) {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MOCHI_DRIVE"], let script = try? String(contentsOfFile: path, encoding: .utf8) else {
             return nil
@@ -60,6 +62,7 @@ final class Drive {
         lines = script.split(whereSeparator: \.isNewline).map(String.init)
         self.panel = panel
         self.settingsWindow = settingsWindow
+        self.paster = paster
         self.pasteboard = pasteboard
         shots = URL(filePath: environment["MOCHI_SHOTS"] ?? "/tmp/mochi-shots", directoryHint: .isDirectory)
         panel.isQuiet = true
@@ -97,6 +100,7 @@ final class Drive {
                     await shot(argument)
                 }
             case "shot-quicklook": await capture(window: panel.quickLookWindowNumber, name: argument)
+            case "trusted": paster.pretendsTrusted = true
             case "settings": settingsWindow.show()
             case "settings-close": settingsWindow.close()
             case "record": settings.startRecording()
@@ -118,7 +122,12 @@ final class Drive {
                 if let window = pickerWindow { await capture(window: window.windowNumber, name: argument) }
             case "hover": settings.hoveredApp = argument.isEmpty ? nil : argument
             case "retention":
-                if let retention = Retention(rawValue: Int(argument) ?? -1) { settings.chooseRetention(retention) }
+                let hours = argument.hasSuffix("h") ? Int(argument.dropLast()) : argument.hasSuffix("d") ? Int(argument.dropLast()).map { $0 * 24 } : Int(argument)
+                if let retention = Retention(rawValue: hours ?? -1) {
+                    settings.chooseRetention(retention)
+                } else {
+                    print("drive: 没有这一档保留时长 \(argument)")
+                }
             case "retention-confirm": settings.confirmRetentionChange()
             case "retention-cancel": settings.retentionChange = nil
             case "ignore": settings.ignoreApps(at: [URL(filePath: argument)])

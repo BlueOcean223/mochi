@@ -242,6 +242,8 @@ private struct IgnoredAppRow: View {
 private extension Retention {
     var title: String {
         switch self {
+        case .hour: "1 小时"
+        case .day: "1 天"
         case .week: "7 天"
         case .month: "30 天"
         case .threeMonths: "3 个月"
