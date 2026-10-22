@@ -83,6 +83,8 @@ final class PanelModel {
     static let pageSize = 100
     /// 文本预览最多显示这么多个字符，再长的 NSTextView 排版会卡。
     static let previewLength = 100_000
+    /// 预览图解到长边这么多像素：预览区最宽约 450 点，二倍屏 900 像素就够，再大也是缩小了显示。
+    static let previewPixels = 900
 
     private(set) var query = ""
     private(set) var kind: ClipKind?
@@ -350,7 +352,7 @@ final class PanelModel {
                 wordCount = (clip.id, count)
                 return
             case .image:
-                if let url = clip.imageURL, let image = await Images.downsample(url, maxPixel: 1200) {
+                if let url = clip.imageURL, let image = await ImageQueue.previews.downsample(url, maxPixel: Self.previewPixels) {
                     content = .image(image)
                 } else {
                     content = .missing
@@ -358,7 +360,7 @@ final class PanelModel {
             case .file:
                 // 只有一个文件、而且是图片时显示图片本身。
                 if clip.fileURLs.count == 1, let url = clip.fileURLs.first, isImageFile(url),
-                   let image = await Images.downsample(url, maxPixel: 1200) {
+                   let image = await ImageQueue.previews.downsample(url, maxPixel: Self.previewPixels) {
                     content = .image(image)
                 } else {
                     content = .files

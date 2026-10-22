@@ -52,6 +52,11 @@ struct SearchField: NSViewRepresentable {
 }
 
 /// 文本预览。长文本用 NSTextView 排，SwiftUI 的 Text 排几万字会卡。不能选中，焦点一直留在搜索框。
+///
+/// 这个视图建一次就一直留着，换条目只换文字（见 PreviewArea）。macOS 26 上 TextKit 2 的 NSTextView 销毁以后，
+/// 排版用的子视图 `_NSTextViewportElementView` 被 AppKit 在 `-[NSView _commonAwake]` 里注册的通知 block 拿着不放，
+/// 连带整套排版对象和全文都留下；文本、图片来回切换时每次新建一个，翻一会儿就是几十 MB。
+/// 没换 TextKit 1：它不漏，可排长文本要多占好几 MB（10 万字的预览多 6 MB 左右）。
 struct TextPreview: NSViewRepresentable {
     let text: String
     let monospaced: Bool
@@ -70,6 +75,11 @@ struct TextPreview: NSViewRepresentable {
             textView.textContainerInset = NSSize(width: 13, height: 14)
         }
         return scrollView
+    }
+
+    /// 还是被销毁了（搜不到东西时右边整块撤掉）：先清空文字，漏下的只是几个空对象。
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        (scrollView.documentView as? NSTextView)?.string = ""
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -93,5 +103,27 @@ struct TextPreview: NSViewRepresentable {
     final class Coordinator {
         var text: String?
         var monospaced = false
+    }
+}
+
+/// 图片预览：图层直接显示 CGImage。
+/// 不用 SwiftUI 的 Image：翻过几十张图以后收起面板，用 Image 时内存多留二三十 MB（两次对比：94 对 67 MB、109 对 81 MB）。
+struct ImageLayer: NSViewRepresentable {
+    let image: CGImage
+    let cornerRadius: CGFloat
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.contentsGravity = .resize
+        view.layer?.minificationFilter = .trilinear
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.cornerCurve = .continuous
+        view.layer?.masksToBounds = true
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        view.layer?.contents = image
     }
 }

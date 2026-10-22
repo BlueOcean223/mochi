@@ -10,6 +10,8 @@ public struct Clip: Sendable, Identifiable, Equatable {
     public let title: String
     public let fileURLs: [URL]
     public let imageURL: URL?
+    /// 图片条目在列表行里用的小图，记录时和原图一起存下（`ClipStore.thumbnailPixels`）。以前记的可能没有，用时补。
+    public let thumbnailURL: URL?
     public let imageWidth: Int?
     public let imageHeight: Int?
     /// 文本的 UTF-8 字节数、图片文件的大小；文件条目是 0。
@@ -46,6 +48,9 @@ public actor ClipStore {
     static let titleLength = 300
     /// 搜索只搜文本的前这么多个字符，太长的文本用 LIKE 扫起来慢。
     static let searchLength = 20_000
+    /// 列表行的小图长边多少像素。行里画 22 点见方、按短边裁，二倍屏要短边 44 像素；长边留到 96，16:9 的图也够。
+    /// 记录时就存一张，列表滚动时只解这张小图，不用每次把原图（截图几 MB、照片十几 MB）整张解一遍。
+    public static let thumbnailPixels = 96
 
     public init(directory: URL) throws {
         imagesDirectory = directory.appending(path: "images", directoryHint: .isDirectory)
@@ -128,7 +133,10 @@ public actor ClipStore {
             }
             return .inserted(id)
         } catch {
-            if let image { try? FileManager.default.removeItem(at: imagesDirectory.appending(path: image.file)) }
+            if let image {
+                try? FileManager.default.removeItem(at: imagesDirectory.appending(path: image.file))
+                try? FileManager.default.removeItem(at: imagesDirectory.appending(path: Self.thumbnailFile(for: image.file)))
+            }
             throw error
         }
     }
@@ -214,7 +222,25 @@ public actor ClipStore {
         }
         let file = "\(name.prefix(32)).\(ext)"
         try output.write(to: imagesDirectory.appending(path: file), options: .atomic)
+        // 小图存不下来不要紧，列表显示时会再生成。
+        if let thumbnail = Images.downsample(data, maxPixel: Self.thumbnailPixels) {
+            Images.writePNG(thumbnail, to: imagesDirectory.appending(path: Self.thumbnailFile(for: file)))
+        }
         return SavedImage(file: file, width: width, height: height, byteSize: output.count)
+    }
+
+    static func thumbnailFile(for imageFile: String) -> String {
+        (imageFile as NSString).deletingPathExtension + ".thumb.png"
+    }
+
+    /// 从原图生成列表行的小图并存下，给记录时还没存小图的老条目用。条目在生成期间被删了就不留。
+    public static func makeThumbnail(of imageURL: URL, at thumbnailURL: URL) -> CGImage? {
+        guard let thumbnail = Images.downsample(imageURL, maxPixel: thumbnailPixels) else { return nil }
+        Images.writePNG(thumbnail, to: thumbnailURL)
+        if !FileManager.default.fileExists(atPath: imageURL.path) {
+            try? FileManager.default.removeItem(at: thumbnailURL)
+        }
+        return thumbnail
     }
 
     // MARK: - 读
@@ -241,6 +267,7 @@ public actor ClipStore {
                 title: statement.text(2) ?? "",
                 fileURLs: paths.map { URL(filePath: $0) },
                 imageURL: statement.text(4).map { imagesDirectory.appending(path: $0) },
+                thumbnailURL: statement.text(4).map { imagesDirectory.appending(path: Self.thumbnailFile(for: $0)) },
                 imageWidth: statement.isNull(5) ? nil : Int(statement.int(5)),
                 imageHeight: statement.isNull(6) ? nil : Int(statement.int(6)),
                 byteSize: Int(statement.int(7)),
@@ -334,6 +361,7 @@ public actor ClipStore {
         }
         for file in files {
             try? FileManager.default.removeItem(at: imagesDirectory.appending(path: file))
+            try? FileManager.default.removeItem(at: imagesDirectory.appending(path: Self.thumbnailFile(for: file)))
         }
         return deleted
     }

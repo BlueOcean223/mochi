@@ -45,6 +45,9 @@ import UniformTypeIdentifiers
 ///     ignore /路径/某个.app    加进忽略的应用；unignore bundle-id 移除
 ///     login on|off            开机启动开关（不真的改登录项）
 ///     shot-settings 名字      截设置窗口；有确认框时另存一张 名字-sheet.png
+///     memory 标签             打印本进程的 footprint 和最高值
+///     measure-show 20         呼出、收起 20 次，打印每次从 show() 到这一帧交给系统用了多久
+///     repeat 50 key down      把后面的命令连做 50 次，中间隔 30 毫秒
 ///     quit
 @MainActor
 final class Drive {
@@ -78,83 +81,150 @@ final class Drive {
         try? FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
         for raw in lines {
             let line = raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
-            let parts = line.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1).map(String.init)
-            guard let command = parts.first else { continue }
-            let argument = parts.count > 1 ? parts[1] : ""
+            guard let (command, argument) = Self.parse(line) else { continue }
             print("drive: \(line)")
-            switch command {
-            case "show": panel.show()
-            case "hide": panel.hide()
-            case "key": key(argument)
-            case "type": panel.model.setQuery(argument)
-            case "clipboard":
-                let types = pasteboard.types?.map(\.rawValue) ?? []
-                print("drive: clipboard types=\(types) string=\(pasteboard.string(forType: .string) ?? "nil")")
-            case "appearance": NSApp.appearance = NSAppearance(named: argument == "light" ? .aqua : .darkAqua)
-            case "wait": try? await Task.sleep(for: .milliseconds(Int(argument) ?? 0))
-            case "select":
-                if let clip = panel.model.clips.first(where: { $0.title.contains(argument) }) {
-                    panel.model.select(clip.id)
-                } else {
-                    print("drive: 没有标题里有「\(argument)」的")
-                }
-            case "shot":
-                if CGPreflightScreenCaptureAccess() {
-                    await capture(window: panel.windowNumber, name: argument)
-                } else {
-                    await shot(argument)
-                }
-            case "shot-quicklook": await capture(window: panel.quickLookWindowNumber, name: argument)
-            case "trusted": paster.pretendsTrusted = true
-            case "backdrop": setBackdrop(Int(argument))
-            case "tint": panel.lightTint = CGFloat(Double(argument) ?? 0.64)
-            case "shot-backdrop": await captureWithBackdrop(name: argument)
-            case "settings": settingsWindow.show()
-            case "settings-close": settingsWindow.close()
-            case "record": settings.startRecording()
-            case "press":
-                if let event = event(argument, window: settingsWindow.windowNumber ?? 0) {
-                    if settings.isRecording {
-                        settings.handleRecording(event)
-                    } else if settings.isPickingApp {
-                        if !settings.handlePickerKey(event) { print("drive: \(argument) 弹层不处理") }
-                    } else {
-                        print("drive: 没在录快捷键，弹层也没开")
-                    }
-                }
-            case "pick":
-                settings.openAppPicker()
-                showPicker()
-            case "pick-type": settings.pickerQuery = argument
-            case "shot-picker":
-                if let window = pickerWindow { await capture(window: window.windowNumber, name: argument) }
-            case "hover": settings.hoveredApp = argument.isEmpty ? nil : argument
-            case "retention":
-                let hours = argument.hasSuffix("h") ? Int(argument.dropLast()) : argument.hasSuffix("d") ? Int(argument.dropLast()).map { $0 * 24 } : Int(argument)
-                if let retention = Retention(rawValue: hours ?? -1) {
-                    settings.chooseRetention(retention)
-                } else {
-                    print("drive: 没有这一档保留时长 \(argument)")
-                }
-            case "retention-confirm": settings.confirmRetentionChange()
-            case "retention-cancel": settings.retentionChange = nil
-            case "ignore": settings.ignoreApps(at: [URL(filePath: argument)])
-            case "unignore": settings.stopIgnoring(argument)
-            case "login": settings.setLaunchAtLogin(argument == "on")
-            case "shot-settings":
-                if let window = settingsWindow.windowNumber { await capture(window: window, name: argument) }
-                // 确认框是另一个窗口，弹出来要一会儿。
-                try? await Task.sleep(for: .milliseconds(300))
-                if let sheet = settingsWindow.sheetWindowNumber { await capture(window: sheet, name: "\(argument)-sheet") }
-            case "quit": NSApp.terminate(nil)
-            default: print("drive: 不认识的命令 \(command)")
-            }
+            await execute(command, argument)
             // 等 SwiftUI 画完、异步读库回来。
             try? await Task.sleep(for: .milliseconds(250))
             if !settings.isPickingApp, let window = pickerWindow {
                 window.orderOut(nil)
                 pickerWindow = nil
             }
+        }
+    }
+
+    private static func parse(_ line: String) -> (String, String)? {
+        let parts = line.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1).map(String.init)
+        guard let command = parts.first else { return nil }
+        return (command, parts.count > 1 ? parts[1] : "")
+    }
+
+    private func execute(_ command: String, _ argument: String) async {
+        switch command {
+        case "show": panel.show()
+        case "hide": panel.hide()
+        case "key": key(argument)
+        case "type": panel.model.setQuery(argument)
+        case "clipboard":
+            let types = pasteboard.types?.map(\.rawValue) ?? []
+            print("drive: clipboard types=\(types) string=\(pasteboard.string(forType: .string) ?? "nil")")
+        case "appearance": NSApp.appearance = NSAppearance(named: argument == "light" ? .aqua : .darkAqua)
+        case "wait": try? await Task.sleep(for: .milliseconds(Int(argument) ?? 0))
+        case "select":
+            if let clip = panel.model.clips.first(where: { $0.title.contains(argument) }) {
+                panel.model.select(clip.id)
+            } else {
+                print("drive: 没有标题里有「\(argument)」的")
+            }
+        case "shot":
+            if CGPreflightScreenCaptureAccess() {
+                await capture(window: panel.windowNumber, name: argument)
+            } else {
+                await shot(argument)
+            }
+        case "shot-quicklook": await capture(window: panel.quickLookWindowNumber, name: argument)
+        case "trusted": paster.pretendsTrusted = true
+        case "backdrop": setBackdrop(Int(argument))
+        case "tint": panel.lightTint = CGFloat(Double(argument) ?? 0.64)
+        case "shot-backdrop": await captureWithBackdrop(name: argument)
+        case "settings": settingsWindow.show()
+        case "settings-close": settingsWindow.close()
+        case "record": settings.startRecording()
+        case "press":
+            if let event = event(argument, window: settingsWindow.windowNumber ?? 0) {
+                if settings.isRecording {
+                    settings.handleRecording(event)
+                } else if settings.isPickingApp {
+                    if !settings.handlePickerKey(event) { print("drive: \(argument) 弹层不处理") }
+                } else {
+                    print("drive: 没在录快捷键，弹层也没开")
+                }
+            }
+        case "pick":
+            settings.openAppPicker()
+            showPicker()
+        case "pick-type": settings.pickerQuery = argument
+        case "shot-picker":
+            if let window = pickerWindow { await capture(window: window.windowNumber, name: argument) }
+        case "hover": settings.hoveredApp = argument.isEmpty ? nil : argument
+        case "retention":
+            let hours = argument.hasSuffix("h") ? Int(argument.dropLast()) : argument.hasSuffix("d") ? Int(argument.dropLast()).map { $0 * 24 } : Int(argument)
+            if let retention = Retention(rawValue: hours ?? -1) {
+                settings.chooseRetention(retention)
+            } else {
+                print("drive: 没有这一档保留时长 \(argument)")
+            }
+        case "retention-confirm": settings.confirmRetentionChange()
+        case "retention-cancel": settings.retentionChange = nil
+        case "ignore": settings.ignoreApps(at: [URL(filePath: argument)])
+        case "unignore": settings.stopIgnoring(argument)
+        case "login": settings.setLaunchAtLogin(argument == "on")
+        case "shot-settings":
+            if let window = settingsWindow.windowNumber { await capture(window: window, name: argument) }
+            // 确认框是另一个窗口，弹出来要一会儿。
+            try? await Task.sleep(for: .milliseconds(300))
+            if let sheet = settingsWindow.sheetWindowNumber { await capture(window: sheet, name: "\(argument)-sheet") }
+        case "memory": printMemory(argument)
+        case "measure-show": await measureShow(times: Int(argument) ?? 20)
+        case "repeat":
+            // 连着做，中间只隔 30 毫秒（按住方向键时系统最快的连发间隔），不等 250 毫秒。
+            let parts = argument.split(separator: " ", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let times = Int(parts[0]), let (command, argument) = Self.parse(parts[1]) else {
+                print("drive: repeat 次数 命令")
+                return
+            }
+            let started = ContinuousClock.now
+            for _ in 0..<times {
+                await execute(command, argument)
+                try? await Task.sleep(for: .milliseconds(30))
+            }
+            print("drive: repeat \(times) 次用了 \(Int((ContinuousClock.now - started).milliseconds)) ms")
+        case "quit": NSApp.terminate(nil)
+        default: print("drive: 不认识的命令 \(command)")
+        }
+    }
+
+    /// 本进程的 footprint（活动监视器「内存」那一列，`footprint` 命令的 Footprint）和启动以来的最高值。
+    private func printMemory(_ label: String) {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else {
+            print("drive: task_info 失败 \(result)")
+            return
+        }
+        func megabytes(_ bytes: some BinaryInteger) -> String { String(format: "%.1f", Double(bytes) / 1_048_576) }
+        print("drive: memory \(label) footprint=\(megabytes(info.phys_footprint)) MB peak=\(megabytes(info.ledger_phys_footprint_peak)) MB")
+    }
+
+    /// 呼出、等这一帧交出去、收起，连做几次。第一次要建 SwiftUI 的视图，单独列出来。
+    private func measureShow(times: Int) async {
+        var results: [Double] = []
+        for _ in 0..<times {
+            let elapsed = await withCheckedContinuation { continuation in
+                panel.didShow = { continuation.resume(returning: $0) }
+                panel.show()
+            }
+            panel.didShow = nil
+            results.append(elapsed.milliseconds)
+            // 停一会儿再收起、再呼出：像真的用的时候那样，中间有别的事，不是一直连着按。
+            try? await Task.sleep(for: .milliseconds(150))
+            panel.hide()
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        guard let first = results.first else { return }
+        let rest = results.dropFirst().sorted()
+        let format = { (value: Double) in String(format: "%.1f", value) }
+        if rest.isEmpty {
+            print("drive: show first=\(format(first)) ms")
+        } else {
+            let median = rest[rest.count / 2]
+            let p90 = rest[min(rest.count - 1, rest.count * 9 / 10)]
+            print("drive: show first=\(format(first)) median=\(format(median)) p90=\(format(p90)) max=\(format(rest.last!)) ms（\(rest.count) 次）")
         }
     }
 

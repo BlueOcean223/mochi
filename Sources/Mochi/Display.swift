@@ -1,5 +1,4 @@
 import AppKit
-import ImageIO
 import MochiCore
 import UniformTypeIdentifiers
 
@@ -70,42 +69,43 @@ enum Formatting {
     }
 }
 
-enum Images {
-    /// 长边不超过 `maxPixel` 的图。ImageIO 解码时就缩小，不会先把原图整张读进内存。
-    @concurrent
-    static func downsample(_ url: URL, maxPixel: Int) async -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
-            return nil
-        }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-        ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+/// 一次只解一张图。预览、列表缩略图各排一队：按住方向键翻图、滚动列表时不会同时解好几张原图，
+/// 一张 4032×3024 的照片解码时要几十 MB，几张一起解内存会一下冲上去。
+/// 排到时调用方已经取消（选中的换了、行滚出去了）就不解。
+actor ImageQueue {
+    static let previews = ImageQueue()
+    static let thumbnails = ImageQueue()
+
+    func downsample(_ url: URL, maxPixel: Int) -> CGImage? {
+        guard !Task.isCancelled else { return nil }
+        return Images.downsample(url, maxPixel: maxPixel)
+    }
+
+    /// 列表行的小图：读记录时存下的那张；没有（以前记的）就从原图生成一张存下。
+    func thumbnail(of imageURL: URL, at thumbnailURL: URL) -> CGImage? {
+        guard !Task.isCancelled else { return nil }
+        return Images.downsample(thumbnailURL, maxPixel: ClipStore.thumbnailPixels)
+            ?? ClipStore.makeThumbnail(of: imageURL, at: thumbnailURL)
     }
 }
 
-/// 列表行的小缩略图，最多留 300 张（一张不到 40 KB）。
+/// 列表行的小图，最多留 300 张（一张不到 40 KB）。
 @MainActor
 enum Thumbnails {
-    /// 行里画 22 点见方、按短边裁，二倍屏要短边 44 像素；长边留到 96，16:9 的图也够。
-    static let maxPixel = 96
     private static let cache: NSCache<NSURL, CGImage> = {
         let cache = NSCache<NSURL, CGImage>()
         cache.countLimit = 300
         return cache
     }()
 
-    static func cached(_ url: URL) -> CGImage? {
-        cache.object(forKey: url as NSURL)
+    static func cached(_ thumbnailURL: URL) -> CGImage? {
+        cache.object(forKey: thumbnailURL as NSURL)
     }
 
-    static func load(_ url: URL) async -> CGImage? {
-        if let image = cached(url) { return image }
-        guard let image = await Images.downsample(url, maxPixel: maxPixel) else { return nil }
-        cache.setObject(image, forKey: url as NSURL)
+    static func load(_ imageURL: URL, thumbnailURL: URL) async -> CGImage? {
+        if let image = cached(thumbnailURL) { return image }
+        guard let image = await ImageQueue.thumbnails.thumbnail(of: imageURL, at: thumbnailURL) else { return nil }
+        cache.setObject(image, forKey: thumbnailURL as NSURL)
         return image
     }
 }

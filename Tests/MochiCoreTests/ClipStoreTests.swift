@@ -156,10 +156,29 @@ private func tiff(width: Int, height: Int) throws -> Data {
     #expect(url.pathExtension == "png")
     #expect(FileManager.default.fileExists(atPath: url.path))
     #expect(clip.byteSize == (try Data(contentsOf: url)).count)
+    let thumbnail = try #require(clip.thumbnailURL.flatMap { Images.downsample($0, maxPixel: 1000) })
+    #expect(thumbnail.width == 40 && thumbnail.height == 30)
+    #expect(t.imageFiles.count == 2)
 
     try await t.store.delete(id: id)
     #expect(try await t.store.count() == 0)
     #expect(t.imageFiles.isEmpty)
+}
+
+@Test func thumbnailIsShrunkAndCanBeMadeLater() async throws {
+    let t = try TempStore()
+    try await t.store.record(PasteboardSnapshot(items: [.init(types: [T.tiff], data: [T.tiff: try tiff(width: 400, height: 300)])]))
+    let clip = try #require(try await t.store.list().first)
+    let thumbnailURL = try #require(clip.thumbnailURL)
+    let stored = try #require(Images.downsample(thumbnailURL, maxPixel: 1000))
+    #expect(stored.width == ClipStore.thumbnailPixels && stored.height == 72)
+
+    // 没存小图的老条目：用时从原图生成，存下来。
+    try FileManager.default.removeItem(at: thumbnailURL)
+    let imageURL = try #require(clip.imageURL)
+    let made = try #require(ClipStore.makeThumbnail(of: imageURL, at: thumbnailURL))
+    #expect(made.width == ClipStore.thumbnailPixels)
+    #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
 }
 
 @Test func reopeningKeepsData() async throws {

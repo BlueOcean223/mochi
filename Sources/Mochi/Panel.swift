@@ -112,6 +112,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     func show() {
         guard !wantsVisible else { return }
         wantsVisible = true
+        let started = ContinuousClock.now
         let frontApp = NSWorkspace.shared.frontmostApplication
         Task {
             // 先把第一页读好再显示，免得先露出上次的列表再跳。
@@ -125,7 +126,24 @@ final class PanelController: NSObject, NSWindowDelegate {
                 focusSearchField()
             }
             panel.invalidateShadow()
+            afterThisFrame { [weak self] in
+                let elapsed = ContinuousClock.now - started
+                log.debug("panel shown in \(elapsed.milliseconds, format: .fixed(precision: 1)) ms")
+                self?.didShow?(elapsed)
+            }
         }
+    }
+
+    /// 面板这一帧交给系统以后调，参数是从 `show()` 开始用了多久。
+    var didShow: ((Duration) -> Void)?
+
+    /// 这一轮 run loop 里 AppKit 排版、SwiftUI 更新、Core Animation 提交都做完以后调一次。
+    /// 它们都挂在 beforeWaiting 上，这个观察者排在最后。之后窗口服务器还要等下一次刷新才合成到屏幕上。
+    private func afterThisFrame(_ body: @escaping @MainActor () -> Void) {
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, false, CFIndex.max) { _, _ in
+            MainActor.assumeIsolated(body)
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
     }
 
     func hide() {
@@ -380,6 +398,12 @@ private extension NSView {
             if let match = subview as? T ?? subview.firstSubview(of: type) { return match }
         }
         return nil
+    }
+}
+
+extension Duration {
+    var milliseconds: Double {
+        Double(components.seconds) * 1000 + Double(components.attoseconds) / 1e15
     }
 }
 

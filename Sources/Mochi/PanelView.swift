@@ -290,8 +290,8 @@ private struct ClipIcon: View {
                 .frame(width: 22, height: 22)
                 .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
         case .image:
-            if let url = clip.imageURL {
-                Thumbnail(url: url)
+            if let url = clip.imageURL, let thumbnail = clip.thumbnailURL {
+                Thumbnail(url: url, thumbnailURL: thumbnail)
             }
         case .file:
             if let url = clip.fileURLs.first {
@@ -304,11 +304,13 @@ private struct ClipIcon: View {
 
 private struct Thumbnail: View {
     let url: URL
+    let thumbnailURL: URL
     @State private var image: CGImage?
 
-    init(url: URL) {
+    init(url: URL, thumbnailURL: URL) {
         self.url = url
-        _image = State(initialValue: Thumbnails.cached(url))
+        self.thumbnailURL = thumbnailURL
+        _image = State(initialValue: Thumbnails.cached(thumbnailURL))
     }
 
     var body: some View {
@@ -325,7 +327,7 @@ private struct Thumbnail: View {
         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
         .task(id: url) {
-            if image == nil { image = await Thumbnails.load(url) }
+            if image == nil { image = await Thumbnails.load(url, thumbnailURL: thumbnailURL) }
         }
     }
 }
@@ -373,20 +375,28 @@ private struct PreviewArea: View {
     let preview: Preview?
 
     var body: some View {
-        switch preview?.content {
-        case .text(let text):
-            TextPreview(text: text, monospaced: CodeApps.contains(clip.sourceBundleID))
-        case .image(let image):
-            ImagePreview(image: image)
-        case .files:
-            FileList(urls: clip.fileURLs)
-        case .missing:
-            Text("图片文件不在了")
-                .font(.system(size: 13))
-                .foregroundStyle(.tertiary)
-        case nil:
-            Color.clear
+        ZStack {
+            // 文本预览一直留着，不是文本时清空、藏起来，不销毁（原因见 TextPreview）。
+            TextPreview(text: text ?? "", monospaced: CodeApps.contains(clip.sourceBundleID))
+                .opacity(text == nil ? 0 : 1)
+                .allowsHitTesting(text != nil)
+            switch preview?.content {
+            case .image(let image):
+                ImagePreview(image: image)
+            case .files:
+                FileList(urls: clip.fileURLs)
+            case .missing:
+                Text("图片文件不在了")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.tertiary)
+            case .text, nil:
+                EmptyView()
+            }
         }
+    }
+
+    private var text: String? {
+        if case .text(let text) = preview?.content { text } else { nil }
     }
 }
 
@@ -399,11 +409,8 @@ private struct ImagePreview: View {
             let natural = CGSize(width: image.width, height: image.height)
             let available = CGSize(width: geometry.size.width - 32, height: geometry.size.height - 32)
             let scale = max(0, min(1, available.width / natural.width, available.height / natural.height))
-            Image(decorative: image, scale: 1)
-                .resizable()
-                .interpolation(.high)
+            ImageLayer(image: image, cornerRadius: 6)
                 .frame(width: natural.width * scale, height: natural.height * scale)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
                 .frame(width: geometry.size.width, height: geometry.size.height)
         }
