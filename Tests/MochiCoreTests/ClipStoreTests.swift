@@ -134,13 +134,13 @@ private func tiff(width: Int, height: Int) throws -> Data {
                                   date: base + 10)
     try await t.store.record(file)
 
-    let files = try await t.store.list(kind: .file)
+    let files = try await t.store.list(filter: .file)
     #expect(files.map(\.title) == ["report.pdf"])
     #expect(files[0].fileURLs == [URL(filePath: "/tmp/report.pdf")])
     #expect(try await t.store.list(matching: "report").count == 1)
 
-    #expect(try await t.store.list(kind: .text, limit: 2).map(\.title) == ["t4", "t3"])
-    #expect(try await t.store.list(kind: .text, limit: 2, offset: 2).map(\.title) == ["t2", "t1"])
+    #expect(try await t.store.list(filter: .text, limit: 2).map(\.title) == ["t4", "t3"])
+    #expect(try await t.store.list(filter: .text, limit: 2, offset: 2).map(\.title) == ["t2", "t1"])
 }
 
 @Test func imagesAreStoredAsPNGFilesAndDeletedWithTheClip() async throws {
@@ -193,10 +193,11 @@ private func tiff(width: Int, height: Int) throws -> Data {
     let t = try TempStore()
     try await t.store.record(text("https://example.com/a?b=1"))
     try await t.store.record(text("看这个 https://example.com"))
-    // 比标题长的文本：标题只是开头，开头像网址也不算。
+    // 比标题（300 字）长的网址按全文认；超过 2048 字节的不认。
     try await t.store.record(text("https://example.com/" + String(repeating: "a", count: 400)))
+    try await t.store.record(text("https://example.com/" + String(repeating: "a", count: 2100)))
     let clips = try await t.store.list()
-    #expect(clips.map(\.isLink) == [false, false, true])
+    #expect(clips.map(\.isLink) == [false, true, false, true])
 }
 
 @Test func touchMovesToTopAndKeepsSource() async throws {
@@ -261,9 +262,9 @@ private func tiff(width: Int, height: Int) throws -> Data {
     try await t.store.record(text("words"))
     try await t.store.record(PasteboardSnapshot(items: [.init(types: [T.tiff], data: [T.tiff: try tiff(width: 40, height: 30)])],
                                                 sourceBundleID: nil, sourceName: nil, date: .now))
-    #expect(try await t.store.unpinnedCount(kind: .image) == 1)
+    #expect(try await t.store.unpinnedCount(filter: .image) == 1)
     #expect(try await t.store.unpinnedCount() == 2)
-    #expect(try await t.store.deleteAllUnpinned(kind: .image) == 1)
+    #expect(try await t.store.deleteAllUnpinned(filter: .image) == 1)
     #expect(try await t.store.list().map(\.title) == ["words"])
     #expect(t.imageFiles.isEmpty)
 }
@@ -314,11 +315,49 @@ private func tiff(width: Int, height: Int) throws -> Data {
     let t = try TempStore()
     try await t.store.record(text("old row"))
     let db = try Database(path: t.directory.appending(path: "mochi.sqlite").path)
-    try db.execute("ALTER TABLE clips DROP COLUMN custom_title; PRAGMA user_version = 1;")
+    try db.execute("ALTER TABLE clips DROP COLUMN custom_title; ALTER TABLE clips DROP COLUMN category; PRAGMA user_version = 1;")
     let reopened = try ClipStore(directory: t.directory)
     let clips = try await reopened.list()
     #expect(clips.map(\.title) == ["old row"])
     #expect(clips[0].customTitle == nil)
     try await reopened.rename(id: clips[0].id, to: "named")
     #expect(try await reopened.list()[0].customTitle == "named")
+}
+
+@Test func textCategoriesAreFilters() async throws {
+    let t = try TempStore()
+    let base = Date(timeIntervalSince1970: 1_000_000)
+    for (i, string) in ["hello", "https://example.com/a", "me@example.com", " #FF6347 ", "rgb(1 2 3)"].enumerated() {
+        try await t.store.record(text(string, at: base + Double(i)))
+    }
+    #expect(try await t.store.list(filter: .text).map(\.title) == ["hello"])
+    #expect(try await t.store.list(filter: .link).map(\.title) == ["https://example.com/a"])
+    #expect(try await t.store.list(filter: .email).map(\.title) == ["me@example.com"])
+    #expect(try await t.store.list(filter: .color).map(\.title) == ["rgb(1 2 3)", " #FF6347 "])
+    #expect(try await t.store.list(filter: .link)[0].isLink)
+    #expect(try await t.store.unpinnedCount(filter: .color) == 2)
+    #expect(try await t.store.deleteAllUnpinned(filter: .color) == 2)
+    #expect(try await t.store.list().count == 3)
+}
+
+@Test func editingTextRedoesItsCategory() async throws {
+    let t = try TempStore()
+    guard case .inserted(let id) = try await t.store.record(text("hello")) else { Issue.record("应该是新增"); return }
+    try await t.store.editText(id: id, to: "#abc")
+    #expect(try await t.store.list()[0].category == .color)
+    try await t.store.editText(id: id, to: "#abc is a color")
+    #expect(try await t.store.list()[0].category == .plain)
+}
+
+@Test func migrationFillsInCategories() async throws {
+    let t = try TempStore()
+    let base = Date(timeIntervalSince1970: 1_000_000)
+    try await t.store.record(text("plain words", at: base))
+    try await t.store.record(text("https://example.com", at: base + 1))
+    try await t.store.record(text("#fff", at: base + 2))
+    let db = try Database(path: t.directory.appending(path: "mochi.sqlite").path)
+    try db.execute("ALTER TABLE clips DROP COLUMN category; PRAGMA user_version = 2;")
+    let reopened = try ClipStore(directory: t.directory)
+    #expect(try await reopened.list().map(\.category) == [.color, .link, .plain])
+    #expect(try await reopened.list(filter: .text).map(\.title) == ["plain words"])
 }

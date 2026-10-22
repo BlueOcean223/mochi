@@ -553,6 +553,8 @@ enum Fixtures {
         let entries: [(items: [PasteboardSnapshot.Item], app: (String, String), ago: TimeInterval, pinned: Bool)] = [
             (text("https://www.raycast.com/blog/a-technical-deep-dive-into-the-new-raycast"), ("com.apple.Safari", "Safari"), 15 * day, false),
             (text("收到，谢谢！"), ("com.tencent.xinWeChat", "微信"), 9 * day, false),
+            (text("hello@raycast.com"), ("com.apple.mail", "邮件"), 7 * day, false),
+            (text("rgba(88, 86, 214, 0.6)"), ("com.figma.Desktop", "Figma"), 6 * day, false),
             (text("/usr/bin/log show --last 1m --predicate 'subsystem == \"com.blueocean223.mochi\"' --style compact"),
              ("com.mitchellh.ghostty", "Ghostty"), 4 * day, false),
             (files([home.appending(path: "Documents/季度报告.pdf")]), ("com.apple.finder", "访达"), 3 * day, false),

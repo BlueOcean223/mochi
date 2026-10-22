@@ -1,5 +1,6 @@
 import AppKit
 import MochiCore
+import SwiftUI
 import UniformTypeIdentifiers
 
 extension Clip {
@@ -14,10 +15,47 @@ extension Clip {
 
     var typeLabel: String {
         switch kind {
-        case .text: isLink ? "链接" : "文本"
+        case .text:
+            switch category {
+            case .plain: "文本"
+            case .link: "链接"
+            case .email: "邮箱"
+            case .color: "颜色"
+            }
         case .image: "图片"
         case .file: "文件"
         }
+    }
+
+    /// 颜色条目的颜色。颜色最多 64 字节，标题就是全文。
+    var color: CSSColor? {
+        kind == .text && category == .color ? CSSColor(title) : nil
+    }
+
+    /// 文本条目的类型图标。
+    var textSymbol: String {
+        switch category {
+        case .plain, .color: "text.alignleft"
+        case .link: "link"
+        case .email: "at"
+        }
+    }
+}
+
+extension CSSColor {
+    var swiftUI: Color {
+        Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+    }
+
+    /// #RRGGBB，不透明时不带透明度。
+    var hex: String {
+        let channels = alpha < 1 ? [red, green, blue, alpha] : [red, green, blue]
+        return "#" + channels.map { String(format: "%02X", Int(($0 * 255).rounded())) }.joined()
+    }
+
+    var rgb: String {
+        let channels = [red, green, blue].map { String(Int(($0 * 255).rounded())) }.joined(separator: ", ")
+        return alpha < 1 ? "rgba(\(channels), \(alpha.formatted(.number.precision(.fractionLength(0...2)))))" : "rgb(\(channels))"
     }
 }
 

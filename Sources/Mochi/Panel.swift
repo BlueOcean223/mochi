@@ -477,7 +477,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .text:
             break
         }
-        let symbol = NSImage(systemSymbolName: clip.isLink ? "link" : "text.alignleft", accessibilityDescription: nil)
+        let symbol = NSImage(systemSymbolName: clip.textSymbol, accessibilityDescription: nil)
         return symbol?.withSymbolConfiguration(.init(pointSize: 24, weight: .regular)) ?? NSImage()
     }
 
@@ -589,14 +589,18 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// 标题只有前 300 个字，长网址要读全文。
     private func openLink() {
-        guard let clip = model.selectedClip, clip.isLink,
-              let url = URL(string: clip.title.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
-        hide()
-        if isQuiet {
-            print("panel: 不打开浏览器（调试脚本）：\(url)")
-        } else {
-            NSWorkspace.shared.open(url)
+        guard let clip = model.selectedClip, clip.isLink else { return }
+        Task {
+            let text = (try? await store.text(of: clip.id)) ?? clip.title
+            guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+            hide()
+            if isQuiet {
+                print("panel: 不打开浏览器（调试脚本）：\(url)")
+            } else {
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 

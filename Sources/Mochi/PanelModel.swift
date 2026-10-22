@@ -135,23 +135,27 @@ struct TextEdit {
 struct ClearRequest {
     let count: Int
     /// 有类型筛选时只清这一类。
-    let kind: ClipKind?
+    let filter: ClipFilter?
 }
 
 /// 面板的状态：搜索词、类型筛选、当前这一页、选中哪条、预览。界面只读它，改都走这里的方法。
 @MainActor
 @Observable
 final class PanelModel {
-    struct KindOption {
-        let kind: ClipKind?
+    struct FilterOption {
+        let filter: ClipFilter?
         let label: String
     }
 
-    static let kindOptions = [
-        KindOption(kind: nil, label: "全部类型"),
-        KindOption(kind: .text, label: "文本"),
-        KindOption(kind: .image, label: "图片"),
-        KindOption(kind: .file, label: "文件"),
+    /// 顺序照 Raycast。
+    static let filterOptions = [
+        FilterOption(filter: nil, label: "全部类型"),
+        FilterOption(filter: .text, label: "文本"),
+        FilterOption(filter: .image, label: "图片"),
+        FilterOption(filter: .file, label: "文件"),
+        FilterOption(filter: .link, label: "链接"),
+        FilterOption(filter: .email, label: "邮箱"),
+        FilterOption(filter: .color, label: "颜色"),
     ]
 
     /// 一次读多少条；往下翻到离末尾 20 条时读下一页。
@@ -162,7 +166,7 @@ final class PanelModel {
     static let previewPixels = 900
 
     private(set) var query = ""
-    private(set) var kind: ClipKind?
+    private(set) var filter: ClipFilter?
     private(set) var clips: [Clip] = []
     private(set) var groups: [ClipGroup] = []
     private(set) var selectedID: Int64?
@@ -250,8 +254,8 @@ struct EnterKeys {
         clips.first { $0.id == selectedID }
     }
 
-    var kindLabel: String {
-        Self.kindOptions.first { $0.kind == kind }?.label ?? "全部类型"
+    var filterLabel: String {
+        Self.filterOptions.first { $0.filter == filter }?.label ?? "全部类型"
     }
 
     /// 选中这条时回车这几个组合做什么。优先纯文本只管文本条目。
@@ -260,7 +264,7 @@ struct EnterKeys {
     }
 
     var isFiltered: Bool {
-        !query.isEmpty || kind != nil
+        !query.isEmpty || filter != nil
     }
 
     /// 预览还没取到时先接着显示上一条的，同类型才行，免得每按一下方向键闪一下空白。
@@ -295,7 +299,7 @@ struct EnterKeys {
         editing = nil
         clearConfirmation = nil
         query = ""
-        kind = nil
+        filter = nil
         await reload()
         scrollToTop += 1
     }
@@ -306,9 +310,9 @@ struct EnterKeys {
         Task { await reload(); scrollToTop += 1 }
     }
 
-    func setKind(_ kind: ClipKind?) {
-        guard kind != self.kind else { return }
-        self.kind = kind
+    func setFilter(_ filter: ClipFilter?) {
+        guard filter != self.filter else { return }
+        self.filter = filter
         Task { await reload(); scrollToTop += 1 }
     }
 
@@ -317,7 +321,7 @@ struct EnterKeys {
         generation += 1
         let generation = generation
         do {
-            let page = try await store.list(matching: query, kind: kind, limit: Self.pageSize)
+            let page = try await store.list(matching: query, filter: filter, limit: Self.pageSize)
             guard generation == self.generation else { return }
             clips = page
             hasMore = page.count == Self.pageSize
@@ -338,7 +342,7 @@ struct EnterKeys {
         let offset = clips.count
         Task {
             defer { isLoadingMore = false }
-            guard let page = try? await store.list(matching: query, kind: kind, limit: Self.pageSize, offset: offset),
+            guard let page = try? await store.list(matching: query, filter: filter, limit: Self.pageSize, offset: offset),
                   generation == self.generation else { return }
             // 翻页期间又记了新的，偏移会错开一点，按 id 去重。
             let seen = Set(clips.map(\.id))
@@ -428,9 +432,9 @@ struct EnterKeys {
 
     /// 先问一句；有类型筛选时只清这一类。没有能删的（全是置顶的）返回 false。
     func askToClear() async -> Bool {
-        let count = (try? await store.unpinnedCount(kind: kind)) ?? 0
+        let count = (try? await store.unpinnedCount(filter: filter)) ?? 0
         guard count > 0 else { return false }
-        clearConfirmation = ClearRequest(count: count, kind: kind)
+        clearConfirmation = ClearRequest(count: count, filter: filter)
         return true
     }
 
@@ -439,10 +443,10 @@ struct EnterKeys {
     }
 
     func confirmClear() async {
-        let kind = clearConfirmation?.kind
+        let filter = clearConfirmation?.filter
         clearConfirmation = nil
         do {
-            try await store.deleteAllUnpinned(kind: kind)
+            try await store.deleteAllUnpinned(filter: filter)
         } catch {
             log.error("clear failed: \(error, privacy: .public)")
         }
@@ -524,16 +528,16 @@ struct EnterKeys {
 
     func toggleTypeMenu() {
         isTypeMenuOpen.toggle()
-        typeMenuIndex = Self.kindOptions.firstIndex { $0.kind == kind } ?? 0
+        typeMenuIndex = Self.filterOptions.firstIndex { $0.filter == filter } ?? 0
     }
 
     func moveTypeMenu(_ delta: Int) {
-        typeMenuIndex = min(max(typeMenuIndex + delta, 0), Self.kindOptions.count - 1)
+        typeMenuIndex = min(max(typeMenuIndex + delta, 0), Self.filterOptions.count - 1)
     }
 
     func chooseType(at index: Int? = nil) {
         isTypeMenuOpen = false
-        setKind(Self.kindOptions[index ?? typeMenuIndex].kind)
+        setFilter(Self.filterOptions[index ?? typeMenuIndex].filter)
     }
 
     // MARK: - 预览

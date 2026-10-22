@@ -168,7 +168,7 @@ extension PanelModel {
             }
         }
 
-        let clearTitle = kind == nil ? "清空全部" : "清空所有\(kindLabel)"
+        let clearTitle = filter == nil ? "清空全部" : "清空所有\(filterLabel)"
         let delete = [
             PanelAction(title: "删除", icon: .symbol("trash"), shortcut: "⌃X", isDestructive: true, command: .delete),
             PanelAction(title: "删除最近的…", icon: .symbol("clock.arrow.circlepath"), shortcut: "⇧⌘X", isDestructive: true,

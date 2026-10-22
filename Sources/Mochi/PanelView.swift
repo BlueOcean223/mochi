@@ -119,7 +119,7 @@ private struct Header: View {
                 model.toggleTypeMenu()
             } label: {
                 HStack(spacing: 6) {
-                    Text(model.kindLabel)
+                    Text(model.filterLabel)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
                 }
@@ -144,11 +144,11 @@ private struct TypeMenu: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(Array(PanelModel.kindOptions.enumerated()), id: \.offset) { index, option in
+            ForEach(Array(PanelModel.filterOptions.enumerated()), id: \.offset) { index, option in
                 HStack {
                     Text(option.label)
                     Spacer()
-                    if option.kind == model.kind {
+                    if option.filter == model.filter {
                         Image(systemName: "checkmark")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
@@ -323,18 +323,23 @@ private struct ClipRow: View {
     }
 }
 
-/// 文本是类型图标（文本、链接），图片是缩略图，文件是文件图标。
+/// 文本是类型图标（文本、链接、邮箱），颜色是色块，图片是缩略图，文件是文件图标。
 private struct ClipIcon: View {
     let clip: Clip
 
     var body: some View {
         switch clip.kind {
         case .text:
-            Image(systemName: clip.isLink ? "link" : "text.alignleft")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 22, height: 22)
-                .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            if let color = clip.color {
+                ColorSwatch(color: color, cornerRadius: 5)
+                    .frame(width: 18, height: 18)
+            } else {
+                Image(systemName: clip.textSymbol)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
         case .image:
             if let url = clip.imageURL, let thumbnail = clip.thumbnailURL {
                 Thumbnail(url: url, thumbnailURL: thumbnail)
@@ -375,6 +380,64 @@ private struct Thumbnail: View {
         .task(id: url) {
             if image == nil { image = await Thumbnails.load(url, thumbnailURL: thumbnailURL) }
         }
+    }
+}
+
+/// 一块颜色，带细边；半透明的颜色底下垫棋盘格，看得出透明。
+private struct ColorSwatch: View {
+    let color: CSSColor
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            if color.alpha < 1 {
+                Checkerboard()
+            }
+            color.swiftUI
+        }
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
+    }
+}
+
+private struct Checkerboard: View {
+    var body: some View {
+        Canvas { context, size in
+            let side: CGFloat = max(4, min(size.width, size.height) / 6)
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+            for row in 0..<Int((size.height / side).rounded(.up)) {
+                for column in 0..<Int((size.width / side).rounded(.up)) where (row + column).isMultiple(of: 2) {
+                    let square = CGRect(x: CGFloat(column) * side, y: CGFloat(row) * side, width: side, height: side)
+                    context.fill(Path(square), with: .color(Color(white: 0.8)))
+                }
+            }
+        }
+    }
+}
+
+/// 颜色条目的预览：大色块，下面是原文和换一种写法（hex 换成 rgb，别的换成 hex）。
+private struct ColorPreview: View {
+    let color: CSSColor
+    let text: String
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ColorSwatch(color: color, cornerRadius: 14)
+                .frame(width: 160, height: 160)
+            VStack(spacing: 4) {
+                Text(text)
+                    .font(.system(size: 15, weight: .medium))
+                    .textSelection(.enabled)
+                Text(text.hasPrefix("#") ? color.rgb : color.hex)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .lineLimit(1)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -426,6 +489,9 @@ private struct PreviewArea: View {
             TextPreview(text: text ?? "", monospaced: CodeApps.contains(clip.sourceBundleID))
                 .opacity(text == nil ? 0 : 1)
                 .allowsHitTesting(text != nil)
+            if let color = clip.color {
+                ColorPreview(color: color, text: clip.title.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
             switch preview?.content {
             case .image(let image):
                 ImagePreview(image: image)
@@ -442,7 +508,7 @@ private struct PreviewArea: View {
     }
 
     private var text: String? {
-        if case .text(let text) = preview?.content { text } else { nil }
+        if case .text(let text) = preview?.content, clip.color == nil { text } else { nil }
     }
 }
 
@@ -517,8 +583,11 @@ private struct InfoSection: View {
             InfoRow(label: "类型") { Text(clip.typeLabel) }
             switch clip.kind {
             case .text:
-                InfoRow(label: "字符数") { Text((clip.characterCount ?? 0).formatted()) }
-                InfoRow(label: "词数") { Text(wordCount.map { $0.formatted() } ?? " ") }
+                // 链接、邮箱、颜色的字数没有意义（Raycast 也不显示）。
+                if clip.category == .plain {
+                    InfoRow(label: "字符数") { Text((clip.characterCount ?? 0).formatted()) }
+                    InfoRow(label: "词数") { Text(wordCount.map { $0.formatted() } ?? " ") }
+                }
             case .image:
                 InfoRow(label: "尺寸") { Text(verbatim: "\(clip.imageWidth ?? 0)×\(clip.imageHeight ?? 0)") }
                 InfoRow(label: "大小") { Text(Formatting.bytes(clip.byteSize)) }
@@ -564,9 +633,9 @@ private struct ClearConfirmation: View {
             Color.black.opacity(0.25)
                 .onTapGesture { model.cancelClear() }
             VStack(spacing: 4) {
-                Text(request.kind.map { _ in "清空所有\(model.kindLabel)？" } ?? "清空全部记录？")
+                Text(request.filter.map { _ in "清空所有\(model.filterLabel)？" } ?? "清空全部记录？")
                     .font(.system(size: 15, weight: .semibold))
-                Text(verbatim: "会删掉 \(request.count) 条\(request.kind == nil ? "" : model.kindLabel + "记录")，置顶的留着。删了找不回来。")
+                Text(verbatim: "会删掉 \(request.count) 条\(request.filter == nil ? "" : model.filterLabel + "记录")，置顶的留着。删了找不回来。")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

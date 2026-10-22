@@ -25,12 +25,14 @@ public struct Clip: Sendable, Identifiable, Equatable {
     public let lastCopiedAt: Date
     /// 用户起的名字（改名），没起是 nil。
     public let customTitle: String?
+    /// 文本条目是不是一个网址、邮箱、颜色；别的条目是 .plain。
+    public let category: TextCategory
 }
 
 extension Clip {
-    /// 整段只是一个网址的文本条目。标题是全文的前 300 个字符，字符数和标题一样长时标题就是全文。
+    /// 整段只是一个网址的文本条目。
     public var isLink: Bool {
-        kind == .text && characterCount == title.count && Classifier.isLink(title)
+        kind == .text && category == .link
     }
 }
 
@@ -71,6 +73,24 @@ public actor ClipStore {
         if current < 2 {
             // 改名：用户起的名字，列表里代替标题显示，搜索也搜它。
             try db.execute("ALTER TABLE clips ADD COLUMN custom_title TEXT; PRAGMA user_version = 2;")
+        }
+        if current < 3 {
+            // 链接、邮箱、颜色单独分类：已有的文本条目按全文补上。
+            try db.transaction {
+                try db.execute("ALTER TABLE clips ADD COLUMN category INTEGER NOT NULL DEFAULT 0")
+                let select = try db.prepare("SELECT id, text FROM clips WHERE kind = ?1 AND length(text) <= 2048")
+                    .bind(.int(Int64(ClipKind.text.rawValue)))
+                var categories: [(Int64, TextCategory)] = []
+                while try select.step() {
+                    let category = TextCategory(text: select.text(1) ?? "")
+                    if category != .plain { categories.append((select.int(0), category)) }
+                }
+                let update = try db.prepare("UPDATE clips SET category = ?1 WHERE id = ?2")
+                for (id, category) in categories {
+                    try update.bind(.int(Int64(category.rawValue)), .int(id)).run()
+                }
+                try db.execute("PRAGMA user_version = 3")
+            }
         }
     }
 
@@ -163,9 +183,11 @@ public actor ClipStore {
         var filePaths: SQLValue = .null
         var byteSize = 0
         var characterCount: SQLValue = .null
+        var category = TextCategory.plain
         switch capture.kind {
         case .text:
             let text = capture.text ?? ""
+            category = TextCategory(text: text)
             title = String(text.prefix(Self.titleLength))
             search = String(text.prefix(Self.searchLength)).lowercased()
             byteSize = text.utf8.count
@@ -184,14 +206,14 @@ public actor ClipStore {
         let date = capture.date.timeIntervalSince1970
         try db.prepare("""
             INSERT INTO clips (kind, hash, title, search_text, text, file_paths, image_file, image_width, image_height,
-                               byte_size, char_count, source_bundle_id, source_name, first_copied_at, last_copied_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)
+                               byte_size, char_count, source_bundle_id, source_name, first_copied_at, last_copied_at, category)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15)
             """)
             .bind(.int(Int64(capture.kind.rawValue)), .text(hash), .text(title), .text(search),
                   capture.kind == .text ? optional(capture.text) : .null, filePaths,
                   optional(image?.file), image.map { .int(Int64($0.width)) } ?? .null,
                   image.map { .int(Int64($0.height)) } ?? .null, .int(Int64(byteSize)), characterCount,
-                  optional(capture.sourceBundleID), optional(capture.sourceName), .double(date))
+                  optional(capture.sourceBundleID), optional(capture.sourceName), .double(date), .int(Int64(category.rawValue)))
             .run()
     }
 
@@ -257,19 +279,19 @@ public actor ClipStore {
     // MARK: - 读
 
     /// 一页列表：置顶的在前（后置顶的在上），其余按最近复制的时间。
-    /// `query` 不区分大小写地匹配文本内容和文件名；`kind` 为 nil 表示全部类型。
-    public func list(matching query: String = "", kind: ClipKind? = nil, limit: Int = 100, offset: Int = 0) throws -> [Clip] {
+    /// `query` 不区分大小写地匹配文本内容、文件名和起的名字；`filter` 为 nil 表示全部类型。
+    public func list(matching query: String = "", filter: ClipFilter? = nil, limit: Int = 100, offset: Int = 0) throws -> [Clip] {
         let pattern = query.isEmpty ? "" : "%" + escapeLike(query.lowercased()) + "%"
         let statement = try db.prepare("""
             SELECT id, kind, title, file_paths, image_file, image_width, image_height, byte_size, char_count,
-                   source_bundle_id, source_name, pinned_at, first_copied_at, last_copied_at, custom_title
+                   source_bundle_id, source_name, pinned_at, first_copied_at, last_copied_at, custom_title, category
             FROM clips
-            WHERE (?1 IS NULL OR kind = ?1)
-              AND (?2 = '' OR search_text LIKE ?2 ESCAPE '\\' OR lower(custom_title) LIKE ?2 ESCAPE '\\')
+            WHERE (\(filter?.condition ?? "1"))
+              AND (?1 = '' OR search_text LIKE ?1 ESCAPE '\\' OR lower(custom_title) LIKE ?1 ESCAPE '\\')
             ORDER BY pinned_at IS NULL, pinned_at DESC, last_copied_at DESC
-            LIMIT ?3 OFFSET ?4
+            LIMIT ?2 OFFSET ?3
             """)
-            .bind(kind.map { .int(Int64($0.rawValue)) } ?? .null, .text(pattern), .int(Int64(limit)), .int(Int64(offset)))
+            .bind(.text(pattern), .int(Int64(limit)), .int(Int64(offset)))
         var clips: [Clip] = []
         while try statement.step() {
             let paths = statement.text(3).flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
@@ -289,7 +311,8 @@ public actor ClipStore {
                 isPinned: !statement.isNull(11),
                 firstCopiedAt: Date(timeIntervalSince1970: statement.double(12)),
                 lastCopiedAt: Date(timeIntervalSince1970: statement.double(13)),
-                customTitle: statement.text(14)))
+                customTitle: statement.text(14),
+                category: TextCategory(rawValue: Int(statement.int(15))) ?? .plain))
         }
         return clips
     }
@@ -325,10 +348,9 @@ public actor ClipStore {
         return try statement.step() ? Int(statement.int(0)) : 0
     }
 
-    /// 清空会删掉的条数：不置顶的，`kind` 不为 nil 时只算这一类。
-    public func unpinnedCount(kind: ClipKind? = nil) throws -> Int {
-        let statement = try db.prepare("SELECT count(*) FROM clips WHERE pinned_at IS NULL AND (?1 IS NULL OR kind = ?1)")
-            .bind(kind.map { .int(Int64($0.rawValue)) } ?? .null)
+    /// 清空会删掉的条数：不置顶的，`filter` 不为 nil 时只算这一类。
+    public func unpinnedCount(filter: ClipFilter? = nil) throws -> Int {
+        let statement = try db.prepare("SELECT count(*) FROM clips WHERE pinned_at IS NULL AND (\(filter?.condition ?? "1"))")
         return try statement.step() ? Int(statement.int(0)) : 0
     }
 
@@ -365,11 +387,12 @@ public actor ClipStore {
                 try db.prepare("DELETE FROM clips WHERE id = ?1").bind(.int(other)).run()
             }
             try db.prepare("""
-                UPDATE clips SET hash = ?1, title = ?2, search_text = ?3, text = ?4, byte_size = ?5, char_count = ?6
+                UPDATE clips SET hash = ?1, title = ?2, search_text = ?3, text = ?4, byte_size = ?5, char_count = ?6, category = ?9
                 WHERE id = ?7 AND kind = ?8
                 """)
                 .bind(.text(hash), .text(String(text.prefix(Self.titleLength))), .text(String(text.prefix(Self.searchLength)).lowercased()),
-                      .text(text), .int(Int64(text.utf8.count)), .int(Int64(text.count)), .int(id), .int(Int64(ClipKind.text.rawValue)))
+                      .text(text), .int(Int64(text.utf8.count)), .int(Int64(text.count)), .int(id), .int(Int64(ClipKind.text.rawValue)),
+                      .int(Int64(TextCategory(text: text).rawValue)))
                 .run()
             try db.prepare("DELETE FROM formats WHERE clip_id = ?1").bind(.int(id)).run()
         }
@@ -385,10 +408,10 @@ public actor ClipStore {
         try deleteClips(where: "id = ?1", .int(id))
     }
 
-    /// 清空，置顶的留着；`kind` 不为 nil 时只清这一类。
+    /// 清空，置顶的留着；`filter` 不为 nil 时只清这一类。
     @discardableResult
-    public func deleteAllUnpinned(kind: ClipKind? = nil) throws -> Int {
-        try deleteClips(where: "pinned_at IS NULL AND (?1 IS NULL OR kind = ?1)", kind.map { .int(Int64($0.rawValue)) } ?? .null)
+    public func deleteAllUnpinned(filter: ClipFilter? = nil) throws -> Int {
+        try deleteClips(where: "pinned_at IS NULL AND (\(filter?.condition ?? "1"))")
     }
 
     /// 删掉 `date` 以后复制的（「删除最近 5 分钟的」），置顶的不删。
