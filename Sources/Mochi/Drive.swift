@@ -35,6 +35,7 @@ import UniformTypeIdentifiers
 ///     shot-all 名字           把 Mochi 自己在屏幕上的窗口合成一张（看 Quick Look 开关的过渡）
 ///     enter-action copy       设置里回车默认做什么（copy、paste），下次呼出生效
 ///     plain-first on          设置里「优先粘贴纯文本」（on、off）
+///     hold cmd                按住 ⌘（放进事件队列，监视器看得到）；hold 不带参数是全松开
 ///     slow 10                 Quick Look 的动画放慢 10 倍，好逐帧截图；slow 1 恢复
 ///     hit 300 30              面板里这一点（左上角原点）上接鼠标的视图
 ///     click 300 30            在应用里造一次左键点击交给面板（不动真鼠标）；rightclick 是右键。SwiftUI 的按钮、点按不认
@@ -145,6 +146,11 @@ final class Drive {
         case "trusted": paster.pretendsTrusted = true
         case "backdrop": setBackdrop(Int(argument))
         case "slow": QuickLook.slowdown = Double(argument) ?? 1
+        case "hold":
+            // 按住、松开修饰键：放进事件队列，面板的事件监视器和真按键一样看得到。hold 不带参数是全松开。
+            if let event = event(argument.isEmpty ? "" : argument, window: panel.windowNumber) ?? flagsEvent([]) {
+                NSApp.postEvent(event, atStart: false)
+            }
         case "enter-action": settings.enterAction = argument == "copy" ? .copy : .paste
         case "plain-first": settings.prefersPlainText = argument == "on"
         case "hit": printHit(argument)
@@ -413,6 +419,11 @@ final class Drive {
     private func key(_ name: String) {
         guard let event = event(name, window: panel.windowNumber) else { return }
         if !panel.handleKey(event) { print("drive: \(name) 没被面板处理") }
+    }
+
+    private func flagsEvent(_ modifiers: NSEvent.ModifierFlags) -> NSEvent? {
+        NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: panel.windowNumber,
+                         context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 0)
     }
 
     /// 「ctrl-shift-x」：前面是修饰键，最后是键名。只有修饰键时是一个 flagsChanged（按住修饰键）。

@@ -67,6 +67,8 @@ enum PanelCommand: Equatable {
     case movePinnedUp, movePinnedDown
     /// ⌘K：操作面板开关。
     case actions
+    /// ⌘1…⌘9、⌘0：对列表第 1–10 条做回车做的事；操作面板开着时执行面板里第 N 项。
+    case number(Int)
     /// 打开操作面板里的子菜单（⌥⌘↵ 选格式粘贴、⇧⌘X 删除最近的）。
     case submenu(ActionSubmenu)
     /// 子菜单里的一项：只写这一种格式再粘贴。
@@ -194,6 +196,9 @@ struct EnterKeys {
     private(set) var scrollToTop = 0
     /// 每次加一，列表就滚到选中的那条（置顶以后它挪到了最上面）。
     private(set) var scrollToSelection = 0
+
+    /// 按住 ⌘ 一会儿，列表前 10 行右边显示 ⌘1…⌘0。
+    var showsNumberHints = false
 
     /// 列表里现在建出来的行在面板里的位置（左上角原点），右键时按位置找是哪一行。
     @ObservationIgnored var rowFrames: [Int64: CGRect] = [:]

@@ -77,6 +77,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// 呼出时自己摆的位置。windowDidMove 里和它一样就不是用户拖的。
     private var placedOrigin: NSPoint?
     private var keyMonitor: Any?
+    private var hintMonitor: Any?
+    private var hintTimer: Task<Void, Never>?
     var openSettings: (() -> Void)?
 
     /// 调试脚本在跑（`Drive`）：面板压在桌面壁纸下面，用户看不见；不抢键盘、不接鼠标，失焦也不收起；
@@ -103,6 +105,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         model.perform = { [weak self] command in self?.perform(command) }
         panel.onRightClick = { [weak self] point in self?.rightClick(at: point) ?? false }
         model.selectionChanged = { [weak self] clip in self?.followSelection(clip) }
+        hintMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown, .scrollWheel]) { [weak self] event in
+            if let self, event.window === self.panel { self.updateNumberHints(event) }
+            return event
+        }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.panel else { return event }
             return self.handleKey(event) ? nil : event
@@ -194,6 +200,8 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         wantsVisible = false
+        hintTimer?.cancel()
+        model.showsNumberHints = false
         model.isTypeMenuOpen = false
         model.cancelClear()
         quickLook.close(animated: false)
@@ -270,6 +278,8 @@ final class PanelController: NSObject, NSWindowDelegate {
                 if model.actionMenu?.back() == false { closeActionMenu() }
             case .sectionUp, .sectionDown, .typeMenu:
                 break
+            case .number(let n):
+                if let action = model.actionMenu?.visible.dropFirst(n - 1).first { perform(action.command) }
             case nil:
                 // Tab 吞掉；打字、删字、⌘A 给操作面板的搜索框。
                 return Int(event.keyCode) == kVK_Tab
@@ -340,6 +350,10 @@ final class PanelController: NSObject, NSWindowDelegate {
                 let span = minutes < 60 ? "\(minutes) 分钟" : minutes < 1440 ? "\(minutes / 60) 小时" : "\(minutes / 1440) 天"
                 hud.show(count == 0 ? "最近 \(span)没有要删的，置顶的不删" : "删掉了最近 \(span)的 \(count) 条")
             }
+        case .number(let n):
+            guard model.clips.indices.contains(n - 1) else { return }
+            model.select(model.clips[n - 1].id)
+            perform(model.enterKeys.enter)
         case .movePinnedUp: Task { await model.movePinned(up: true) }
         case .movePinnedDown: Task { await model.movePinned(up: false) }
         case .pin: Task { await model.togglePin() }
@@ -357,6 +371,22 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .settings:
             hide()
             openSettings?()
+        }
+    }
+
+    /// 只按住 ⌘ 0.4 秒，列表前 10 行显示 ⌘1…⌘0（照 Raycast）；松开、按了别的键、滚动时收起。
+    private func updateNumberHints(_ event: NSEvent) {
+        hintTimer?.cancel()
+        let onlyCommand = event.type == .flagsChanged
+            && event.modifierFlags.intersection([.command, .shift, .control, .option]) == .command
+        guard onlyCommand else {
+            if model.showsNumberHints { model.showsNumberHints = false }
+            return
+        }
+        hintTimer = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, let self, self.model.actionMenu == nil else { return }
+            self.model.showsNumberHints = true
         }
     }
 
@@ -582,6 +612,9 @@ extension PanelCommand {
             }
         case kVK_ANSI_K:
             command = modifiers == .command ? .actions : nil
+        case kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9, kVK_ANSI_0:
+            let digits = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9, kVK_ANSI_0]
+            command = modifiers == .command ? digits.firstIndex(of: Int(event.keyCode)).map { .number($0 + 1) } : nil
         case kVK_ANSI_Y:
             command = modifiers == .command ? .quickLook : nil
         case kVK_ANSI_F:

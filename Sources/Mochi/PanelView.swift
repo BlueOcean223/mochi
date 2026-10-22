@@ -194,7 +194,7 @@ private struct ClipList: View {
                                 .foregroundStyle(.tertiary)
                                 .padding(EdgeInsets(top: 10, leading: 10, bottom: 5, trailing: 10))
                         case .clip(let clip):
-                            ClipRow(clip: clip, isSelected: clip.id == model.selectedID)
+                            ClipRow(clip: clip, isSelected: clip.id == model.selectedID, number: numberHint(for: clip))
                                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.rowFrames[clip.id] = $0 }
                                 .onDisappear { model.rowFrames[clip.id] = nil }
                                 .onTapGesture { model.select(clip.id) }
@@ -241,6 +241,12 @@ private struct ClipList: View {
         }
     }
 
+    /// 按住 ⌘ 时前 10 行的序号（1…10），其余 nil。
+    private func numberHint(for clip: Clip) -> Int? {
+        guard model.showsNumberHints, let index = model.clips.prefix(10).firstIndex(where: { $0.id == clip.id }) else { return nil }
+        return index + 1
+    }
+
     private enum Row {
         enum ID: Hashable {
             case top
@@ -274,6 +280,8 @@ private struct ClipList: View {
 private struct ClipRow: View {
     let clip: Clip
     let isSelected: Bool
+    /// 按住 ⌘ 时显示 ⌘1…⌘0（10 是 ⌘0）。
+    var number: Int?
     @State private var isHovered = false
 
     var body: some View {
@@ -285,12 +293,16 @@ private struct ClipRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
-            if clip.isPinned {
+            if let number {
+                Keycap(key: "⌘\(number % 10)")
+                    .transition(.opacity)
+            } else if clip.isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
         }
+        .animation(.easeOut(duration: 0.15), value: number)
         .padding(.horizontal, 8)
         .frame(height: PanelMetrics.rowHeight)
         .background(Color.primary.opacity(isSelected ? 0.1 : isHovered ? 0.05 : 0),
