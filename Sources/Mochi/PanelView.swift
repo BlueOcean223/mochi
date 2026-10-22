@@ -6,7 +6,7 @@ import SwiftUI
 enum PanelMetrics {
     static let size = CGSize(width: 750, height: 475)
     static let cornerRadius: CGFloat = 26
-    static let headerHeight: CGFloat = 64
+    static let headerHeight: CGFloat = 56
     static let listWidth: CGFloat = 300
     static let rowHeight: CGFloat = 40
     /// 比 Raycast 的 36 小，不那么抢眼。
@@ -43,7 +43,7 @@ struct PanelView: View {
         .overlay(alignment: .topTrailing) {
             if model.isTypeMenuOpen {
                 TypeMenu(model: model)
-                    .padding(.top, 54)
+                    .padding(.top, PanelMetrics.headerHeight - 10)
                     .padding(.trailing, 16)
             }
         }
