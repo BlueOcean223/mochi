@@ -84,7 +84,7 @@ open build/Mochi.app
 
 `scripts/bundle.sh` signs the app with a certificate named "Mochi Development" if your keychain has one, and ad hoc otherwise. macOS ties the Accessibility permission to the signature, so with ad hoc signing you have to grant it again after every build. To avoid that, create a self-signed code signing certificate named Mochi Development in Keychain Access (Certificate Assistant › Create a Certificate…, certificate type Code Signing).
 
-GitHub Actions builds and tests every push. Pushing a tag that starts with `v`, such as `v0.2.0`, publishes a release with a disk image and a zip of the app. Releases have to be signed with the certificate stored in the repository secrets `MOCHI_CERT_P12` (the certificate and its private key as a base64 .p12) and `MOCHI_CERT_PASSWORD`, because Mochi only updates to versions signed with the same certificate; without them the release build fails.
+GitHub Actions builds and tests every push. Pushing a tag that starts with `v`, such as `v0.2.0`, publishes a release with a disk image and a zip of the app. The release notes are that version's section of [CHANGELOG.md](CHANGELOG.md) (written in Chinese), so add the section before tagging. Releases have to be signed with the certificate stored in the repository secrets `MOCHI_CERT_P12` (the certificate and its private key as a base64 .p12) and `MOCHI_CERT_PASSWORD`, because Mochi only updates to versions signed with the same certificate; without them the release build fails.
 
 The app icon is drawn by `scripts/icon.swift`.
 

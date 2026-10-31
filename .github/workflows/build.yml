@@ -1,5 +1,6 @@
 # 推到 main、提 PR 时：跑测试、打包，打好的 Mochi.app 放在这次运行的 Artifacts 里。
 # 推 v 开头的标签（v0.2.0）时：再建一个 GitHub Release，附上 Mochi-0.2.0.dmg（下载安装用）和 Mochi-0.2.0.zip（Mochi 自动更新用）。
+# Release 的说明是 CHANGELOG.md 里 0.2.0 那一节，没有这一节就不发。
 #
 # 签名：仓库 Secrets 里有 MOCHI_CERT_P12（证书和私钥的 p12，base64）和 MOCHI_CERT_PASSWORD 时用它签，
 # 辅助功能权限认签名，换了新版本权限还在；没有就是 ad-hoc 签名，每个版本都要重新给权限。
@@ -23,6 +24,10 @@ jobs:
       HAS_CERT: ${{ secrets.MOCHI_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Check release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: scripts/notes.sh "${GITHUB_REF_NAME#v}"
 
       - name: Toolchain
         run: |
@@ -87,10 +92,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: Mochi
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" Mochi-*.dmg Mochi-*.zip --repo "$GITHUB_REPOSITORY" --title "Mochi ${GITHUB_REF_NAME#v}" --generate-notes
+        run: |
+          scripts/notes.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" Mochi-*.dmg Mochi-*.zip --repo "$GITHUB_REPOSITORY" --title "Mochi ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md"
