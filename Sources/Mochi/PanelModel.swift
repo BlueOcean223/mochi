@@ -244,6 +244,8 @@ struct EnterKeys {
 
     /// 按住 ⌘ 一会儿，列表前 10 行右边显示 ⌘1…⌘0。
     var showsNumberHints = false
+    /// 鼠标停在哪一行上。记在这里而不是行里：面板在鼠标还停在行上时藏起来，行收不到移开，下次呼出还亮着。
+    var hoveredID: Int64?
 
     /// 列表里现在建出来的行在面板里的位置（左上角原点），右键时按位置找是哪一行。
     @ObservationIgnored var rowFrames: [Int64: CGRect] = [:]

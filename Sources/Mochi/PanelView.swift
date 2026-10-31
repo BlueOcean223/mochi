@@ -204,7 +204,15 @@ private struct ClipList: View {
                                 .foregroundStyle(.tertiary)
                                 .padding(EdgeInsets(top: 10, leading: 10, bottom: 5, trailing: 10))
                         case .clip(let clip):
-                            ClipRow(clip: clip, isSelected: clip.id == model.selectedID, number: numberHint(for: clip))
+                            ClipRow(clip: clip, isSelected: clip.id == model.selectedID, isHovered: clip.id == model.hoveredID,
+                                    number: numberHint(for: clip))
+                                .onHover { inside in
+                                    if inside {
+                                        model.hoveredID = clip.id
+                                    } else if model.hoveredID == clip.id {
+                                        model.hoveredID = nil
+                                    }
+                                }
                                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.rowFrames[clip.id] = $0 }
                                 .onDisappear { model.rowFrames[clip.id] = nil }
                                 .onTapGesture { model.select(clip.id) }
@@ -291,9 +299,9 @@ private struct ClipList: View {
 private struct ClipRow: View {
     let clip: Clip
     let isSelected: Bool
+    let isHovered: Bool
     /// 按住 ⌘ 时显示 ⌘1…⌘0（10 是 ⌘0）。
     var number: Int?
-    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -319,7 +327,6 @@ private struct ClipRow: View {
         .background(Color.primary.opacity(isSelected ? 0.1 : isHovered ? 0.05 : 0),
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
     }
 }
 

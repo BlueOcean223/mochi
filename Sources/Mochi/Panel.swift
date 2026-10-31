@@ -216,6 +216,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         wantsVisible = false
         hintTimer?.cancel()
         model.showsNumberHints = false
+        model.hoveredID = nil
         model.isTypeMenuOpen = false
         model.cancelClear()
         quickLook.close(animated: false)
