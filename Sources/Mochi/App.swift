@@ -35,10 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = makeMainMenu()
         // 跑调试脚本时不放菜单栏图标，不然菜单栏上会多出一个 Mochi。
         if !isDriving {
-            statusMenu = StatusMenu(settings: settings, openPanel: { [weak self] in self?.panel?.show() },
-                                    openSettings: { [weak self] in self?.settingsWindow?.show() },
-                                    resetPanelPosition: { [weak self] in self?.panel?.resetPosition() },
-                                    installUpdate: { [weak self] in self?.installUpdate() })
+            statusMenu = makeStatusMenu()
         }
         let directory = dataDirectory()
         let store: ClipStore
@@ -81,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.openSettings = { [weak settingsWindow] in settingsWindow?.show() }
         panel.pauseChanged = { [weak self] in self?.statusMenu?.updatePauseItem() }
         panel.installUpdate = { [weak self] in self?.installUpdate() }
+        panel.checkForUpdates = { [weak self] in self?.checkForUpdates() }
         updater.changed = { [weak self, weak panel] in
             let version = self?.updater.latest?.version?.description
             self?.statusMenu?.showUpdate(version)
@@ -89,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         #if DEBUG
         if let drive = Drive(panel: panel, settingsWindow: settingsWindow, paster: paster, pasteboard: pasteboard, sequence: sequence,
-                             updater: updater) {
+                             updater: updater, makeStatusMenu: { [unowned self] in makeStatusMenu() }) {
             // 跑脚本时不占全局快捷键，免得和正在用的 Mochi 抢。
             hotKey.isQuiet = true
             sequenceHotKey.isQuiet = true
@@ -105,6 +103,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.start()
     }
 
+    private func makeStatusMenu() -> StatusMenu {
+        StatusMenu(settings: settings, openPanel: { [weak self] in self?.panel?.show() },
+                   openSettings: { [weak self] in self?.settingsWindow?.show() },
+                   resetPanelPosition: { [weak self] in self?.panel?.resetPosition() },
+                   installUpdate: { [weak self] in self?.installUpdate() },
+                   checkForUpdates: { [weak self] in self?.checkForUpdates() })
+    }
+
     /// 菜单栏菜单、面板里的「更新到 …」：进度和失败的原因用 HUD 说，设置窗口里也看得到。
     private func installUpdate() {
         guard let version = updater.latest?.version else { return }
@@ -114,6 +120,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if case .failed(let message) = updater.status { hud?.show(message) }
         }
     }
+
+    /// 菜单栏菜单、面板里的「检查更新…」：查完用 HUD 说结果。有新版本时菜单最上面的「更新到 …」由 updater.changed 加上。
+    private func checkForUpdates() {
+        guard !updater.isBusy else { return }
+        if updater.isAvailable { hud?.show("正在检查更新…") }
+        Task {
+            if let message = await updater.checkFromMenu() { hud?.show(message) }
+        }
+    }
+}
+
+/// 退出再打开自己：菜单栏的「重启 Mochi」和更新完都走这里。
+/// 等这个进程退出以后再打开：退出前打开，系统会把已经在跑的这个提到前面，不会启动新的。
+@MainActor
+func relaunch(_ bundle: URL = Bundle.main.bundleURL) {
+    let process = Process()
+    process.executableURL = URL(filePath: "/bin/sh")
+    process.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
+                         "sh", String(ProcessInfo.processInfo.processIdentifier), bundle.path]
+    do {
+        try process.run()
+    } catch {
+        log.error("relaunch failed: \(error, privacy: .public)")
+    }
+    NSApp.terminate(nil)
 }
 
 /// 没有菜单栏菜单的应用也要一个主菜单：搜索框里的 ⌘V、⌘A、⌘Z 是靠主菜单「编辑」里的项派发的，设置窗口的 ⌘W 也是。

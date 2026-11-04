@@ -87,7 +87,7 @@ enum PanelCommand: Equatable {
     case openAccessibilitySettings
     /// ⌘,：收起面板，打开设置窗口。
     case settings
-    /// 底栏左边的「设置」：Mochi 自己的菜单（设置、暂停记录、窗口位置复原、退出）。菜单栏图标被隐藏、被挤掉时也能退出。
+    /// 底栏左边的「设置」：Mochi 自己的菜单（设置、检查更新、暂停记录、窗口位置复原、重启、退出）。菜单栏图标被隐藏、被挤掉时也能退出。
     case appMenu
     case togglePause
     /// 面板回到默认位置，清掉记下的位置。
@@ -96,6 +96,10 @@ enum PanelCommand: Equatable {
     case quit
     /// 有新版本时 Mochi 自己的菜单里的「更新到 …」：下载、替换、重启。
     case installUpdate
+    /// Mochi 自己的菜单里的「检查更新…」：结果用 HUD 说。
+    case checkForUpdates
+    /// Mochi 自己的菜单里的「重启 Mochi」。
+    case relaunch
 }
 
 /// 回车这几个组合各做什么，跟着设置变（照 Raycast）：回车默认复制时 ↵ 和 ⌘↵ 对调、⌥↵ 变成复制且不关闭面板；

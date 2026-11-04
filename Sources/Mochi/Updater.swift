@@ -105,6 +105,16 @@ final class Updater {
         changed?()
     }
 
+    /// 菜单栏菜单的「检查更新…」：查完用一句话说结果。正在查、正在装时什么都不做，返回 nil。
+    func checkFromMenu() async -> String? {
+        guard isAvailable else { return "这个构建没有设置更新地址" }
+        guard !isBusy else { return nil }
+        await check(userInitiated: true)
+        if case .failed(let message) = status { return message }
+        if let version = latest?.version { return "有新版本 \(version.description)，菜单最上面可以更新" }
+        return "已经是最新版本（\(currentVersion)）"
+    }
+
     private func fetchLatest() async throws -> Data {
         #if DEBUG
         if let feed = Self.localFeed { return try Data(contentsOf: feed) }
@@ -205,23 +215,13 @@ final class Updater {
         return flags & SecCodeSignatureFlags.adhoc.rawValue != 0
     }
 
-    /// 等这个进程退出以后再打开新的：退出前打开，系统会把已经在跑的这个提到前面，不会启动新的。
     private func relaunch(_ bundle: URL) {
         guard !isQuiet else {
             print("updater: 换好了，不重启（调试脚本）")
             status = .idle
             return
         }
-        let process = Process()
-        process.executableURL = URL(filePath: "/bin/sh")
-        process.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
-                             "sh", String(ProcessInfo.processInfo.processIdentifier), bundle.path]
-        do {
-            try process.run()
-        } catch {
-            log.error("relaunch failed: \(error, privacy: .public)")
-        }
-        NSApp.terminate(nil)
+        Mochi.relaunch(bundle)
     }
 
     private static func run(_ tool: String, _ arguments: [String]) async throws {

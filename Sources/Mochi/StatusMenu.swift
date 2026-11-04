@@ -13,14 +13,16 @@ final class StatusMenu: NSObject {
     private let openSettings: () -> Void
     private let resetPanelPosition: () -> Void
     private let installUpdate: () -> Void
+    private let checkForUpdates: () -> Void
 
     init(settings: Settings, openPanel: @escaping () -> Void, openSettings: @escaping () -> Void,
-         resetPanelPosition: @escaping () -> Void, installUpdate: @escaping () -> Void) {
+         resetPanelPosition: @escaping () -> Void, installUpdate: @escaping () -> Void, checkForUpdates: @escaping () -> Void) {
         self.settings = settings
         self.openPanel = openPanel
         self.openSettings = openSettings
         self.resetPanelPosition = resetPanelPosition
         self.installUpdate = installUpdate
+        self.checkForUpdates = checkForUpdates
         super.init()
         let image = NSImage(systemSymbolName: "list.clipboard", accessibilityDescription: "Mochi")
         image?.isTemplate = true
@@ -44,11 +46,22 @@ final class StatusMenu: NSObject {
         let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
+        let checkItem = NSMenuItem(title: "检查更新…", action: #selector(checkUpdate), keyEquivalent: "")
+        checkItem.target = self
+        menu.addItem(checkItem)
         menu.addItem(.separator())
+        let relaunchItem = NSMenuItem(title: "重启 Mochi", action: #selector(restart), keyEquivalent: "")
+        relaunchItem.target = self
+        menu.addItem(relaunchItem)
         menu.addItem(NSMenuItem(title: "退出 Mochi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
         updatePauseItem()
     }
+
+    #if DEBUG
+    /// 调试脚本打印菜单里有哪些项。
+    var menu: NSMenu? { item.menu }
+    #endif
 
     /// 菜单里「打开剪切板历史」后面显示的是现在的呼出快捷键。
     func showShortcut(_ shortcut: Shortcut) {
@@ -65,6 +78,14 @@ final class StatusMenu: NSObject {
 
     @objc private func update() {
         installUpdate()
+    }
+
+    @objc private func checkUpdate() {
+        checkForUpdates()
+    }
+
+    @objc private func restart() {
+        relaunch()
     }
 
     @objc private func open() {

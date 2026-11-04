@@ -130,9 +130,11 @@ extension PanelModel {
         isTypeMenuOpen = false
         var actions = [
             PanelAction(title: "设置…", icon: .symbol("gearshape"), shortcut: "⌘,", command: .settings),
+            PanelAction(title: "检查更新…", icon: .symbol("arrow.triangle.2.circlepath"), command: .checkForUpdates),
             PanelAction(title: isPaused ? "恢复记录" : "暂停记录", icon: .symbol(isPaused ? "play.circle" : "pause.circle"),
                         command: .togglePause),
             PanelAction(title: "窗口位置复原", icon: .symbol("arrow.uturn.backward"), command: .resetPosition),
+            PanelAction(title: "重启 Mochi", icon: .symbol("arrow.clockwise"), group: 1, command: .relaunch),
             PanelAction(title: "退出 Mochi", icon: .symbol("power"), shortcut: "⌘Q", group: 1, command: .quit),
         ]
         if let version = updateVersion {

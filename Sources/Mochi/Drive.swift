@@ -56,6 +56,8 @@ import UniformTypeIdentifiers
 ///                             releases/latest，附件地址可以是 file://），不然真的去问 GitHub
 ///     update install          点「更新到 …」：下载、核对、替换，不重启
 ///     update auto-off         关掉「自动检查更新」；update 不带参数只打印状态
+///     update menu-check       点菜单栏的「检查更新…」，打印 HUD 上说的话
+///     status-menu             放上菜单栏图标，打印菜单里的项
 ///     press ctrl-alt-k        录快捷键时按键，写法同 key；只写修饰键（ctrl-cmd）是按住修饰键。加应用的弹层开着时给弹层
 ///     pick                    点「忽略的应用」的 +。弹层（NSPopover）压不到桌面下面，脚本里把弹层的内容放进一个压在桌面下的窗口
 ///     pick-type 微            在弹层的搜索框里打字
@@ -82,11 +84,13 @@ final class Drive {
     private let shots: URL
     private var pickerWindow: NSWindow?
     private var backdropWindow: NSWindow?
+    private let makeStatusMenu: () -> StatusMenu
+    private var statusMenu: StatusMenu?
 
     nonisolated static var isRequested: Bool { ProcessInfo.processInfo.environment["MOCHI_DRIVE"] != nil }
 
     init?(panel: PanelController, settingsWindow: SettingsWindowController, paster: Paster, pasteboard: NSPasteboard,
-          sequence: PasteSequence, updater: Updater) {
+          sequence: PasteSequence, updater: Updater, makeStatusMenu: @escaping () -> StatusMenu) {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MOCHI_DRIVE"], let script = try? String(contentsOfFile: path, encoding: .utf8) else {
             return nil
@@ -98,6 +102,7 @@ final class Drive {
         self.pasteboard = pasteboard
         self.sequence = sequence
         self.updater = updater
+        self.makeStatusMenu = makeStatusMenu
         shots = URL(filePath: environment["MOCHI_SHOTS"] ?? "/tmp/mochi-shots", directoryHint: .isDirectory)
         panel.isQuiet = true
         settingsWindow.isQuiet = true
@@ -205,10 +210,20 @@ final class Drive {
             switch argument {
             case "check": await updater.check(userInitiated: true)
             case "install": await updater.install()
+            case "menu-check": print("hud: \(await updater.checkFromMenu() ?? "nil")")
             case "auto-off": settings.checksForUpdates = false
             default: break
             }
             print("updater: \(updater.status) latest=\(updater.latest?.tag ?? "nil")")
+        case "status-menu":
+            // 平常跑脚本不放菜单栏图标，这条命令才放，打印菜单里的项（隐藏的标出来）。
+            if statusMenu == nil { statusMenu = makeStatusMenu() }
+            statusMenu?.showUpdate(updater.latest?.version?.description)
+            for item in statusMenu?.menu?.items ?? [] {
+                let title = item.isSeparatorItem ? "---" : item.title
+                let key = item.keyEquivalent.isEmpty ? "" : " [\(item.keyEquivalent)]"
+                print("status-menu: \(title)\(key)\(item.isHidden ? " (隐藏)" : "")")
+            }
         case "press":
             if let event = event(argument, window: settingsWindow.windowNumber ?? 0) {
                 if settings.isRecording {

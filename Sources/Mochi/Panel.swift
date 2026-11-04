@@ -85,6 +85,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     var pauseChanged: (() -> Void)?
     /// Mochi 自己的菜单里点了「更新到 …」。
     var installUpdate: (() -> Void)?
+    /// Mochi 自己的菜单里点了「检查更新…」。
+    var checkForUpdates: (() -> Void)?
     #if DEBUG
     /// 调试脚本截图时当作前台应用的名字和图标（底栏「粘贴到 X」、⌘K 里的图标）。
     var pretendFrontApp: (name: String, icon: NSImage)?
@@ -439,6 +441,15 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .installUpdate:
             hide()
             installUpdate?()
+        case .checkForUpdates:
+            hide()
+            checkForUpdates?()
+        case .relaunch:
+            if isQuiet {
+                print("panel: 不重启（调试脚本）")
+            } else {
+                relaunch()
+            }
         }
     }
 
